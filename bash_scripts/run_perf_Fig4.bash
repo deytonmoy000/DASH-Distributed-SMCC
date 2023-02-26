@@ -1,0 +1,5 @@
+data2='Youtube_sparse'
+data3='Orkut_sparse'
+python3 bash_scripts/computePerf_ExpSet3.py v 1 experiment_results_output_data/Exp3/${data2}_exp3_DASH-1-4.csv experiment_results_output_data/Exp3/${data2}_exp3_DASH-2-4.csv experiment_results_output_data/Exp3/${data2}_exp3_DASH-4-4.csv experiment_results_output_data/Exp3/${data2}_exp3_DASH-8-4.csv experiment_results_output_data/Exp3/${data3}_exp3_DASH-1-4.csv experiment_results_output_data/Exp3/${data3}_exp3_DASH-2-4.csv experiment_results_output_data/Exp3/${data3}_exp3_DASH-4-4.csv experiment_results_output_data/Exp3/${data3}_exp3_DASH-8-4.csv 
+python3 bash_scripts/computePerf_ExpSet3.py t 1 experiment_results_output_data/Exp3/${data2}_exp3_DASH-1-4.csv experiment_results_output_data/Exp3/${data2}_exp3_DASH-2-4.csv experiment_results_output_data/Exp3/${data2}_exp3_DASH-4-4.csv experiment_results_output_data/Exp3/${data2}_exp3_DASH-8-4.csv experiment_results_output_data/Exp3/${data3}_exp3_DASH-1-4.csv experiment_results_output_data/Exp3/${data3}_exp3_DASH-2-4.csv experiment_results_output_data/Exp3/${data3}_exp3_DASH-4-4.csv experiment_results_output_data/Exp3/${data3}_exp3_DASH-8-4.csv 
+

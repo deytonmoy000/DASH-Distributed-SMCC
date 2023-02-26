@@ -1,0 +1,2 @@
+f_of_S,Queries,Time,TimeDist,TimePost,SolSize,k,n,nNodes,nThreads,trial
+968924,1,40381.17194437981,39056.07059144974,1325.101351737976,156,156.0,1000000,4,4,1
