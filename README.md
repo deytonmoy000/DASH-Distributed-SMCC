@@ -1,5 +1,5 @@
 ### DASH-Distributed_SMCC-python ###
-*DASH-Distributed_SMCC-python* is a python library of high-performance MPI-parallelized implementation of state-of-the-art  distributed algorithms for submodular maximization described in the paper ***"DASH: A Distributed and Parallelizable Algorithm for Size-Constrained Submodular Maximization"***. 
+*DASH-Distributed_SMCC-python* is a python library of high-performance MPI-parallelized implementation of state-of-the-art  distributed(MR) algorithms for submodular maximization described in the paper ***"DASH: A Distributed and Parallelizable Algorithm for Size-Constrained Submodular Maximization"***. 
 
 
 
