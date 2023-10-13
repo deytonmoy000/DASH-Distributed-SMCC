@@ -18,6 +18,7 @@ Please ensure the following steps are completed before running the experiments:
 
 
 ### Replicating our Experiments 4 and 5 (Journal additional exps): ###
+
 **To generate the results **
    -  Run the slurm script *script_64N_32T_Journal.sh* from the base directory to generate Experiment 4 results.
    -  Run the slurm script *script_32N_1T_Journal.sh* from the base directory to generate Experiment 5 results.
