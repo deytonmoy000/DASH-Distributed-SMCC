@@ -30,8 +30,10 @@ for i in range(3, len(sys.argv)):
     arg2 = arg[pos+1:]
     pos = arg2.find('.csv');
     alg = arg2[0:pos];
-    if(alg[0:4]=="DASH"):
+    if(alg[0:6]=="DASH-8"):
         alg="R-DASH"
+    if(alg[0:6]=="DASH-2"):
+        alg="R-DASH-2"
         repFlag = True
     elif(alg[0:5]=="GDASH"):
         alg="G-DASH"
@@ -39,8 +41,8 @@ for i in range(3, len(sys.argv)):
     elif(alg[0:5]=="TDASH"):
         alg="T-DASH"
         repFlag = True
-    elif(alg[0:2]=="DD"):
-        alg="DDist"
+    elif(alg[0:6]=="DD-8-4"):
+        alg="DDist-8"
     elif(alg[0:8]=="Parallel"):
         alg="PAlg"
     elif(alg[0:3]=="PGB"):
@@ -53,8 +55,14 @@ for i in range(3, len(sys.argv)):
         alg= "RG-8"
         rgcFlag = True
     elif(alg=="RandGreedI-32-1"):
-        alg= "RG-32"
+        alg= "RG"
+        # rgcFlag = True
+    elif(alg=="DD-8-1"):
+        alg= "DDist-8"
         rgcFlag = True
+    elif(alg=="DD-32-1"):
+        alg= "DDist"
+        # rgcFlag = True
     elif(alg[0:13]=="RandGreedILAG"):
         alg= "RG-LAG"
     elif(alg[0:13]=="RandGreedILAG"):
@@ -127,14 +135,18 @@ colorsHash['BCG'] = 'c'
 colorsHash['PAlg'] = 'y'
 colorsHash['DDist'] = 'darkviolet'
 colorsHash['R-DASH'] = 'b'
+colorsHash['R-DASH-8'] = 'b'
+colorsHash['R-DASH-2'] = 'm'
 colorsHash['T-DASH'] = 'g'
 colorsHash['G-DASH'] = 'r'
 colorsHash['LS+PGB'] = 'olivedrab'
 colorsHash['(LS+PGB)$^{H}$'] = 'olivedrab'
 colorsHash['RG-LAG'] = 'm'
 colorsHash['MED+(RDASH)'] = 'k'
-colorsHash['RG-8'] = 'goldenrod'
-colorsHash['RG-32'] = 'm'
+colorsHash['RG-8'] = 'lime'
+colorsHash['RG-32'] = 'goldenrod'
+colorsHash['DDist-8'] = 'plum'
+colorsHash['DDist-32'] = 'darkviolet'
 
 markersHash = {}
 markersHash['RG'] = 's'
@@ -142,6 +154,8 @@ markersHash['BCG'] = '>'
 markersHash['PAlg'] = 'd'
 markersHash['DDist'] = '*'
 markersHash['R-DASH'] = 'X'
+markersHash['R-DASH-8'] = 'X'
+markersHash['R-DASH-2'] = '^'
 markersHash['T-DASH'] = '^'
 markersHash['G-DASH'] = 'o'
 markersHash['LS+PGB'] = '.'
@@ -150,6 +164,8 @@ markersHash['RG-LAG'] = '^'
 markersHash['MED+(RDASH)'] = '>'
 markersHash['RG-8'] = 's'
 markersHash['RG-32'] = '^'
+markersHash['DDist-8'] = '>'
+markersHash['DDist-32'] = '*'
 
 linesHash = {}
 linesHash['RG'] = '-'
@@ -157,6 +173,8 @@ linesHash['BCG'] = ':'
 linesHash['PAlg'] = '--'
 linesHash['DDist'] = '-.'
 linesHash['R-DASH'] = '-'
+linesHash['R-DASH-8'] = '-'
+linesHash['R-DASH-2'] = '-'
 linesHash['T-DASH'] = ':'
 linesHash['G-DASH'] = '--'
 linesHash['LS+PGB'] = '-.'
@@ -165,6 +183,8 @@ linesHash['RG-LAG'] = '-.'
 linesHash['MED+(RDASH)'] = '--'
 linesHash['RG-8'] = '-'
 linesHash['RG-32'] = '-.'
+linesHash['DDist-8'] = ':'
+linesHash['DDist-32'] = '-.'
 
 if (sys.argv[1][0] == 'v'):
     outFName_val= 'val-';
@@ -326,13 +346,16 @@ else:
 
 if(nodes in [50000, 53889] or nodes > 100000 or metaFlag):
     plt.xlabel( "$k$", fontsize=25 );
-    for i in range( 0, nalgs ):
-        for j in range( 0, len( X[ i ] ) ):
-            X[i][j] = X[i][j] / k_max;
-    plt.xlabel( "$k$/$k'$", fontsize=25);
+    # for i in range( 0, nalgs ):
+        # if algnames[i] == "R-DASH":
+        #     algnames[i] = "R-DASH-8"
+    #     for j in range( 0, len( X[ i ] ) ):
+    #         X[i][j] = X[i][j] / k_max;
+    # plt.xlabel( "$k$/$(n/\ell^2)$", fontsize=25);
     postfix='_exp2.pdf';
     if(algnames[1]=="LS+PGB"):
-        algnames[1] = "(LS+PGB)$^{H}$"   
+        algnames[1] = "(LS+PGB)$^{H}$"
+
     # plt.xlim( 0.005,0.105  );     
 else:
     plt.xlabel( "$k$", fontsize=25 );
@@ -353,11 +376,11 @@ if which==0 and normalize==False:
             # plt.ylabel( "Objective / Greedy" );
             plt.ylabel( "Objective Value" );            
 
-if rgcFlag:
-    plt.xlabel( "$k / n$" );
-    for i in range( 0, nalgs ):
-        for j in range( 0, len( X[ i ] ) ):
-            X[i][j] = X[i][j] / nodes;
+# if rgcFlag:
+#     plt.xlabel( "$k / n$" );
+#     for i in range( 0, nalgs ):
+#         for j in range( 0, len( X[ i ] ) ):
+#             X[i][j] = X[i][j] / nodes;
 
 markSize=16;
 
@@ -408,7 +431,7 @@ plt.gca().grid(which='major', axis='both', linestyle='--')
 
 
 #plt.grid(color='grey', linestyle='--' );
-if((dataname2 == "RevenueMax" or dataname2 == "ImageSumm")  and which == 0):
+if((dataname2 == "ImageSumm")  and which == 0):
     if printlegend:
         plt.legend(loc='lower right', numpoints=1,prop={'size':18},framealpha=0.6);
 

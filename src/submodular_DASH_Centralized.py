@@ -44,7 +44,7 @@ def check_inputs(objective, k):
     assert( hasattr(objective, 'value') )
     assert( hasattr(objective, 'marginalval') )
     # k is greater than 0
-    print("k=",k, " len(objective.groundset) =",len(objective.groundset)  )
+    # print("k=",k, " len(objective.groundset) =",len(objective.groundset)  )
     assert( k>0 )
     # k is smaller than the number of elements in the ground set
     assert( k<=len(objective.groundset) )
@@ -89,7 +89,7 @@ def margvals_returnvals(objective, L, N):
     
     return ele_vals_local_vals
 
-def parallel_margvals_returnvals_thread(objective, L, N, nthreads=4):
+def parallel_margvals_returnvals_thread(objective, L, N, nthreads=16):
     '''
     Parallel-compute the marginal value f(element)-f(L) of each element in set N. Version for stochasticgreedy_parallel.
     Returns the ordered list of marginal values corresponding to the list of remaining elements N
@@ -119,7 +119,7 @@ def parallel_margvals_returnvals(objective, L, N, comm, rank, size):
     comm.barrier()
     N_split_local = np.array_split(N, size)[rank]
 
-    ele_vals_local_vals = parallel_margvals_returnvals_thread(objective, L, list(N_split_local), nthreads=4)
+    ele_vals_local_vals = parallel_margvals_returnvals_thread(objective, L, list(N_split_local), nthreads=16)
     # Compute the marginal addition for each elem in N, then add the best one to solution L; remove it from remaining elements N
     # ele_vals_local_vals = [ objective.marginalval( [elem], L ) for elem in N_split_local ]
     
@@ -138,7 +138,7 @@ def val_of_sets_returnvals(objective, sets):
     
     return set_vals_local_vals
 
-def parallel_val_of_sets_thread(objective, list_of_sets, nthreads=4):
+def parallel_val_of_sets_thread(objective, list_of_sets, nthreads=16):
     nthreads_rank = objective.nThreads
     ''' Parallel-compute the value f(S) of each set (sublist) in list_of_sets, return ordered list of corresponding values f(S) '''
     list_split_local = np.array_split(list_of_sets, nthreads_rank)
@@ -162,7 +162,7 @@ def parallel_val_of_sets_returnvals(objective, N, comm, rank, size):
     # Scatter the roughly equally sized subsets of remaining elements for which we want marg values
     comm.barrier()
     N_split_local = np.array_split(N, size)[rank]
-    ele_vals_local_vals = parallel_val_of_sets_thread(objective, list(N_split_local), nthreads=4)
+    ele_vals_local_vals = parallel_val_of_sets_thread(objective, list(N_split_local), nthreads=16)
     # Compute the marginal addition for each elem in N, then add the best one to solution L; remove it from remaining elements N
     # ele_vals_local_vals = [ objective.marginalval( [elem], L ) for elem in N_split_local ]
     
@@ -278,10 +278,7 @@ def parallel_adaptiveAdd(lmbda, V, S, objective, eps, k, comm, rank, size, tau =
     return [val for sublist in B_vals for val in sublist]
     
 
-
-
-
-# Utility functions for DASH and GDASH
+# Utility functions for RDASH and GDASH
 
 def LAT_SingleNode(V, S, V_all, V_ground, q, objective, tau, eps, delta, k, pastGains):
     
@@ -330,22 +327,41 @@ def LAT_SingleNode(V, S, V_all, V_ground, q, objective, tau, eps, delta, k, past
         B = parallel_adaptiveAdd_thread(lmbda, seq, S, objective, eps, k, tau)
         #Added query increment
         queries += len(lmbda)
-        lmbda_star = lmbda[0]
+        
+        # ## PREVIOUS VERSION of LAT Ran the Following ()
+        # lmbda_star = lmbda[0]
+        # if len(B) > 1:
+        #     for i in range(1,len(B)):
+        #         if(B[i]):
+        #             if (i == len(B) - 1):
+        #                 lmbda_star = lmbda[-1];
+        #         else:
+        #             lmbda_star = lmbda[i]
+        #             break;
+
+        # T = set(seq[0:lmbda_star]);
+
+        
+        # for i in range(lmbda_star, len(B)):
+        #     if (B[i]):
+        #         T = set().union(T, seq[ lmbda[ i - 1 ] : lmbda[ i ] ]);
+        
+
+        ### UPDATED Version stops at the first FALSE in Lambda or selects the last value in LAMBDA
+        lmbda_star = lmbda[-1]
         if len(B) > 1:
             for i in range(1,len(B)):
                 if(B[i]):
-                    if (i == len(B) - 1):
-                        lmbda_star = lmbda[-1];
+                    continue
                 else:
                     lmbda_star = lmbda[i]
                     break;
 
         T = set(seq[0:lmbda_star]);
-        
-        for i in range(lmbda_star, len(B)):
-            if (B[i]):
-                T = set().union(T, seq[ lmbda[ i - 1 ] : lmbda[ i ] ]);
-        S= list(set().union(S, T))
+
+        T = list( set(T)-set(S) )
+        # S= list(set().union(S, T))
+        S.extend(T)
         V = list( np.sort( list( set(V)-set(S) ) ) );
 
         #Filter
@@ -365,14 +381,14 @@ def LAT_SingleNode(V, S, V_all, V_ground, q, objective, tau, eps, delta, k, past
             break;
 
     if (len(V) > 0 and len(S) < k and (itr==ell)): 
-        # print( "LAT has failed. This should be an extremely rare event. Terminating program..." );
-        # print( "V: ", V );
+        print( "LAT has failed. This should be an extremely rare event. Terminating program..." );
+        print( "V: ", V );
         # print( "S: ", S );
         exit(1);
             
     return [pastGains, S, queries];
 
-def LAG_SingleNode(objective, k, eps, V, V_all, q, C, seed=42, stop_if_approx=True, nthreads=4):
+def LAG_SingleNode(objective, k, eps, V, V_all, q, C, seed=42, stop_if_approx=False, nthreads=16, alpha=0, Gamma=0):
 
     '''
     The algorithm LAG using Single Node execution for Submodular Mazimization.
@@ -400,30 +416,35 @@ def LAG_SingleNode(objective, k, eps, V, V_all, q, C, seed=42, stop_if_approx=Tr
         V = list( set().union( C, V)); 
     if(k >= len(V)):
         return V
-    # Gamma, sol, pastGains = ParallelLinearSeq_SingleNode_ParallelAlgo(objective, k, eps_FLS, V, seed, True, nthreads=4, return_all=True );
-    pastGains = parallel_margvals_returnvals_thread(objective, [], V, nthreads=4)
+    # Gamma, sol, pastGains = ParallelLinearSeq_SingleNode_ParallelAlgo(objective, k, eps_FLS, V, seed, True, nthreads=16, return_all=True );
+    pastGains = parallel_margvals_returnvals_thread(objective, [], V, nthreads)
     
-    alpha = 1.0 / k
-    valtop = np.max( pastGains);
-    Gamma = valtop
+    if (alpha==0 or Gamma==0):
+        alpha = 1.0 / k
+        valtop = np.max( pastGains);
+        Gamma = valtop
     
     S = []
     #I1 = make_I(eps, k)
     
     tau = Gamma / (alpha * np.float(k));
-    taumin = Gamma / (3.0 * np.float(k));
-    
+    # taumin = Gamma / (3.0 * np.float(k));
+    taumin = (eps * Gamma) / np.float(k);
+    print( "LAG-- Gamma:", Gamma, "  alpha:", alpha,   "  tau:", tau, "  taumin:", taumin, "  |V|:", len(V), "  k:", k);
     # if (tau > valtop / np.float(k)):
     #     tau = valtop / np.float(k);
     
     #pastGains = np.inf*np.ones(len(V));
     while (tau > taumin):
+        
         tau = np.min( [tau, np.max( pastGains ) * (1.0 - eps)] );
         if (tau <= 0.0):
             tau = taumin;
         V_above_thresh_ids = np.where(pastGains >= tau)[0]
         V_above_thresh = [ V[ele] for ele in V_above_thresh_ids ];
         V_above_thresh = list( set(V_above_thresh) - set(S) );
+
+        print( "LAG: Before LAT-- |V|:", len(V_above_thresh), "  |S|:", len(S), "  tau:", tau );
         currGains = parallel_margvals_returnvals_thread(objective, S, V_above_thresh, 1)
         
         for ps in range( len(V_above_thresh )):
@@ -436,10 +457,10 @@ def LAG_SingleNode(objective, k, eps, V, V_all, q, C, seed=42, stop_if_approx=Tr
             S_ids = [V.index(elem) for elem in S]   
             for ele in S_ids:
                 pastGains[ele] = 0;
-
+        print( "LAG: After LAT-- |V|:", len(V_above_thresh), "  |S|:", len(S), "  tau:", tau );
         if (len(S) >= k):
             break;
-
+    print("LAG: After WHILE-- |V|:", len(V_above_thresh), "  |S|:", len(S), "  tau:", tau, "  k:", k )
     if(len(S)>k):
         Ap = S[len(S) - k : len(S)]
     else:
@@ -447,7 +468,7 @@ def LAG_SingleNode(objective, k, eps, V, V_all, q, C, seed=42, stop_if_approx=Tr
     
     return Ap
 
-def Dist_LAG(objective, k, eps, V, V_all, q, comm, rank, size, C=[], p_root=0, seed=42, stop_if_apx=False, nthreads=4):
+def Dist_LAG(objective, k, eps, V, V_all, q, comm, rank, size, C=[], p_root=0, seed=42, stop_if_apx=False, nthreads=16):
 
     check_inputs(objective, k)
     comm.barrier()
@@ -463,10 +484,10 @@ def Dist_LAG(objective, k, eps, V, V_all, q, comm, rank, size, C=[], p_root=0, s
     
     return [val for sublist in ele_vals for val in sublist]
 
-# DASH (Algorithm 1)
-def DASH(objective, k, eps, comm, rank, size, p_root=0, seed=42, stop_if_aprx=False, nthreads=4):
+# RDASH (Algorithm 1)
+def RDASH(objective, k, eps, comm, rank, size, p_root=0, seed=42, stop_if_aprx=False, nthreads=16):
     '''
-    The parallelizable distributed greedy algorithm DASH. Uses multiple machines to obtain solution (Algorithm 1)
+    The parallelizable distributed greedy algorithm RDASH. Uses multiple machines to obtain solution (Algorithm 1)
     PARALLEL IMPLEMENTATION (Multithread)
     
     INPUTS:
@@ -539,7 +560,7 @@ def DASH(objective, k, eps, comm, rank, size, p_root=0, seed=42, stop_if_aprx=Fa
         S = T
     else:
         S = list(S_DistGB_all[S_p])
-    print(S)
+    # print(S)
     p_stop = MPI.Wtime()
     time_post = (p_stop - p_start_post)
     time = (p_stop - p_start)
@@ -552,7 +573,7 @@ def DASH(objective, k, eps, comm, rank, size, p_root=0, seed=42, stop_if_aprx=Fa
     return valSol, time, time_dist, time_post, S
 
 # GDASH  (Algorithm 4)
-def GDASH(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=4):
+def GDASH(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=16):
     
 
     '''
@@ -699,9 +720,11 @@ def LAT_SingleThread(V, S, V_ground, q, objective, tau, eps, delta, k, pastGains
         #T= parallel_pessimistically_add_x_seq(objective, S, seq, tau, comm, rank , size );
         T = set(seq[0:lmbda_star]);
         
-        for i in range(lmbda_star, len(B)):
-            if (B[i]):
-                T = set().union(T, seq[ lmbda[ i - 1 ] : lmbda[ i ] ]);
+        ### PREVIOUS VERSION of LAT Ran the Following (Current Version stops at the first FALSE in Lambda; hence commented)
+        # for i in range(lmbda_star, len(B)):
+        #     if (B[i]):
+        #         T = set().union(T, seq[ lmbda[ i - 1 ] : lmbda[ i ] ]);
+
         S= list(set().union(S, T))
         V = list( np.sort( list( set(V)-set(S))));
         
@@ -747,7 +770,7 @@ def LAT_SingleThread_MultiAll(V_all, S_all, V_ground, q, objective, taus, eps, d
         A.append(sol_j)
     return A
 
-def Dist_LAT_SingleNode_GuessOPT(objective, k, eps, delta, V, V_all, q, taus, pastGains, seed=42, stop_if_apx=False, nthreads=4):
+def Dist_LAT_SingleNode_GuessOPT(objective, k, eps, delta, V, V_all, q, taus, pastGains, seed=42, stop_if_apx=False, nthreads=16):
     '''
     Helper function to run all different threshold guesses in parallel on each machine
     '''
@@ -767,7 +790,7 @@ def Dist_LAT_SingleNode_GuessOPT(objective, k, eps, delta, V, V_all, q, taus, pa
 
     # return return_value
 
-def DAT_GuessOPT_SingleNode_postProc(objective, k, eps, delta, V_all, taus, S_all, V_ground, q, seed=42, stop_if_apx=False, nthreads=4):
+def DAT_GuessOPT_SingleNode_postProc(objective, k, eps, delta, V_all, taus, S_all, V_ground, q, seed=42, stop_if_apx=False, nthreads=16):
     '''
     Helper function to run all different threshold guesses in parallel on each machine
     '''
@@ -789,7 +812,7 @@ def DAT_GuessOPT_SingleNode_postProc(objective, k, eps, delta, V_all, taus, S_al
 
     # return return_value
 
-def Dist_LAT_GuessOPT(objective, k, eps, delta, V, V_all, q, comm, rank, size, p_root=0, seed=42, stop_if_apx=False, nthreads=4):
+def Dist_LAT_GuessOPT(objective, k, eps, delta, V, V_all, q, comm, rank, size, p_root=0, seed=42, stop_if_apx=False, nthreads=16):
 
     check_inputs(objective, k)
     comm.barrier()
@@ -818,7 +841,7 @@ def Dist_LAT_GuessOPT(objective, k, eps, delta, V, V_all, q, comm, rank, size, p
 
     return res
 
-def DAT_GuessOPT(objective, k, eps, comm, rank, size, p_root=0, seed=42, stop_if_aprx=False, nthreads=4):
+def DAT_GuessOPT(objective, k, eps, comm, rank, size, p_root=0, seed=42, stop_if_aprx=False, nthreads=16):
     '''
     The parallelizable distributed greedy algorithm DAT. Uses multiple machines to obtain solution (Algorithm 3)
     The algorithm proceeds with no knowledge of OPT
@@ -922,6 +945,1059 @@ def DAT_GuessOPT(objective, k, eps, comm, rank, size, p_root=0, seed=42, stop_if
     return valSol, time, time_dist, time_post, S
 
 
+'''
+Journal Version Additional Algorithms
+'''
+#############################################################
+
+# Utility functions for LDASH
+
+def adaptiveAdd_thread_LAS(idcs, V, S, objective, eps, k):
+    B = []
+    if ( len( idcs ) > 0 ):
+        
+        S_union_T = list( set().union( V[0 : idcs[0]], S) ); # T_{i-1} = V[0 : idcs[i]]
+        valS_union_T = objective.value( S_union_T );
+
+        for v_i in idcs:
+            S_union_T = list( set().union( [V[v_i]], S_union_T) );
+            gain= objective.value( S_union_T ) - valS_union_T;
+            thresh = valS_union_T / np.float(k);
+            
+            if (gain >= thresh):
+                B.append(True)
+            else:
+                B.append(False)
+            
+            valS_union_T = valS_union_T + gain;
+    
+    # Gather the partial results to all processes
+    
+    return B
+
+def parallel_adaptiveAdd_thread_LAS(V, S, objective, eps, k):
+    
+    '''
+    Parallel-compute the marginal value of block  of elements and set the corresponding flag to True based on condition in LINE 13 of ALG. 1
+    '''
+    #Dynamically obtaining the number of threads fr parallel computation
+    # nthreads_rank = multiprocessing.cpu_count()
+    nthreads = objective.nThreads
+    idcs = np.array_split( range( len( V ) ), nthreads )
+    #lmbda_split_local = np.array_split(lmbda, size)[rank]
+    #with concurrent.futures.ProcessPoolExecutor(max_workers=nthreads) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=nthreads) as executor:
+        futures = [executor.submit(adaptiveAdd_thread_LAS, split, V, S, objective, eps, k) for split in idcs]
+        return_value = [f.result() for f in futures]
+
+    B = []
+    for i in range(len(return_value)):
+        B.extend(return_value[i])
+    return B
+
+def parallel_adaptiveAdd_LAS(V, S, objective, eps, k, comm, rank, size):
+    
+    '''
+    Parallel-compute the marginal value of block  of elements and set the corresponding flag to True based on condition in LINE 13 of ALG. 1
+    '''
+    
+    # Scatter the roughly equally sized subsets of remaining elements for which we want marg values
+    comm.barrier()
+    # idcs = np.array_split( range( len( lmbda ) ), size )[ rank ]
+    V_split_local = np.array_split(V, size)[rank]
+
+    B = parallel_adaptiveAdd_thread_LAS(list(V_split_local), V, S, objective, eps, k)
+
+    # Gather the partial results to all processes
+    B_vals = comm.allgather(B)
+
+    return [val for sublist in B_vals for val in sublist]
+
+def LAS_SingleNode(V_N, objective, k, eps, q, a, C, seed=42, nthreads=16):
+    '''
+    The parallelizable greedy algorithm LAS (Low-Adapive-Sequencing) using Single Node execution (OPTIMIZED IMPLEMENTATION)
+    
+    INPUTS:
+    class objective -- contains the methods 'value()' that we want to optimize and its marginal value function 'marginalval()' 
+    int k           -- the cardinality constraint (must be k>0)
+    float eps       -- the error tolerance between 0 and 1
+    int a           -- the max singleton assigned to every machine
+    comm            -- the MPI4py Comm (MPI.COMM_WORLD)
+    int rank        -- the processor's rank (comm.Get_rank())
+    int size        -- the number of processors (comm.Get_size())
+
+    OPTIONAL INPUTS:
+    int seed            -- random seed to use when drawing samples
+    bool stop_if_approx -- determines whether we exit as soon as we find OPT that reaches approx guarantee or keep searching for better solution
+
+    OUTPUTS:
+    float f(S)                  -- the value of the solution
+    int queries                 -- the total queries (marginal values count as 2 queries since f(T)-f(S) )
+    float time                  -- the processing time to optimize the function.
+    list S                      -- the solution, where each element in the list is an element in the solution set.
+    list of lists S_rounds      -- each element is a list containing the solution set S at the corresponding round.
+    list of lists time_rounds   -- each element is a list containing the time at the corresponding round
+    list of lists query_rounds  -- each element is a list containing the number of queries at the corresponding round
+    list singletonVals          -- each element is the current marginal gain of the corresponding element in groundset
+    '''  
+
+    
+    print( "\n --- Running LAS on N_i ---"); 
+
+    if(len(C) > 0):
+        V_N = list( set().union( C, V_N)); 
+    if(k >= len(V_N)):
+        return V_N
+
+    n = len(V_N)    
+
+    # Each processor gets its own random state so they can independently draw IDENTICAL random sequences a_seq.
+    #proc_random_states = [np.random.RandomState(seed) for processor in range(size)]
+    randstate = np.random.RandomState(seed)
+    queries = 0
+    #initialize S to max singleton
+    S = [a]
+    
+    # q.shuffle(V_ground)
+    currGains = parallel_margvals_returnvals_thread(objective, S, V_N, nthreads)
+    
+    queries += len(V_N)
+    
+    # S = [np.argmax(currGains)];
+    singletonIdcs = np.argsort(currGains);
+    singletonVals = currGains;
+    currGains = np.sort(currGains);
+    
+    print( "\n --- Running first on the top 3K max singleton ---"); 
+
+    #run first considering the top 3K singletons as the universe
+    V = np.array(V_N)[ singletonIdcs[-3*k:] ]
+    
+    currGains = currGains[-3*k:];
+    valtopk = np.sum( currGains[-k:] );
+
+
+    while len(V) > 0:
+        # Filtering
+        t = objective.value(S)/np.float(k)
+        queries += 1
+        
+        
+        #do lazy discard first, based on last round's computations
+        V_above_thresh = np.where(currGains >= t)[0]
+        V = list( set([ V[idx] for idx in V_above_thresh ] ));
+
+        #now recompute requisite gains
+        print( "|V|:", len(V), "  |S|:", len(S), "  t:", t );
+        print( "starting pmr..." );
+        
+        # currGains = parallel_margvals_returnvals(objective, S, [ele for ele in V], comm, rank, size)
+        currGains = parallel_margvals_returnvals_thread(objective, S, V, nthreads)
+        print("done.");
+        queries += len(V)
+        
+        
+        V_above_thresh = np.where(currGains >= t)[0]
+        V = [ V[idx] for idx in V_above_thresh ];
+        currGains = [ currGains[idx] for idx in V_above_thresh ];
+        ###End Filtering
+        
+        print( "R1 After Filtering-- |V|:", len(V), "  |S|:", len(S), "  t:", t );
+
+        if (len(V) == 0):
+            break;
+        
+        # Random Permutation
+        q.shuffle(V)
+        
+        print("R1 starting adaptiveAdd...");
+        B = parallel_adaptiveAdd_thread_LAS(V, S, objective, eps, k)
+        print("done.");
+        
+        queries += len( V );
+        
+        i_star = 0
+        
+        for i in range(1, len(B)+1):
+            if(i <= k):
+                if(np.sum(B[0:i]) >= (1-eps)*i):
+                    i_star = i
+            else:
+                if((np.sum(B[i-k:i]) >= (1-eps)*k) and (np.sum(B[0:i-k]) >= (1-eps)*(i-k))):
+                    i_star = i
+        
+        print( "R1 i_star: " , i_star);
+
+        # S = list( set().union( V[0:i_star], S) ); # T_{i-star} = V[0 : i-star]
+        T = list(set(V[0:i_star]) - set(S))
+        S.extend(T)
+
+    print( "--- Completed run on top 3K singletons --- ");   
+    #run second on the entire universe
+
+    t = objective.value(S) / np.float( k );
+    queries += 1
+    print( "--- Running on the entire universe with t=", t); 
+    
+    V_above_thresh = np.where(singletonVals >= t)[0]
+    V = [ V_N[idx] for idx in V_above_thresh ]; 
+    currGains = [ singletonVals[idx] for idx in V_above_thresh ];
+    
+    print( "R2 After pre-lazy discard |V| (>= t):", len(V)); 
+
+    while len(V) > 0:
+        # Filtering
+        t = objective.value(S)/np.float(k)
+        queries += 1
+        
+        #do lazy discard first, based on last round's computations
+        V_above_thresh = np.where(currGains >= t)[0]
+        V = list( set([ V[idx] for idx in V_above_thresh ] ));
+
+        print( "R2 |V|:", len(V), "  |S|:", len(S), "  t:", t );
+        #now recompute requisite gains
+        print( "R2 starting pmr..." );
+        currGains = parallel_margvals_returnvals_thread(objective, S, V, nthreads)
+    
+        #Added query increment
+        queries += len(V)
+        
+        #currGains = parallel_margvals_returnvals(objective, S, [ele for ele in V], comm, rank, size)
+        # if ( rank == 0):
+        #     print( "done.");
+        
+        V_above_thresh = np.where(currGains >= t)[0]
+        V = [ V[idx] for idx in V_above_thresh ];
+        currGains = [ currGains[idx] for idx in V_above_thresh ];
+
+        if (len(V) == 0):
+            break;
+        
+        print( "R2 After Filtering-- |V|:", len(V), "  |S|:", len(S), "  t:", t );
+
+        # Random Permutation
+        q.shuffle(V)
+        
+        print("R2 starting adaptiveAdd...");
+        B = parallel_adaptiveAdd_thread_LAS(V, S, objective, eps, k)
+        print("R2 done.");
+        
+        queries += len( V );
+        
+        i_star = 0
+        
+        for i in range(1, len(B)+1):
+            if(i <= k):
+                if(np.sum(B[0:i]) >= (1-eps)*i):
+                    i_star = i
+            else:
+                if((np.sum(B[i-k:i]) >= (1-eps)*k) and (np.sum(B[0:i-k]) >= (1-eps)*(i-k))):
+                    i_star = i
+
+        print( "R2 i_star: " , i_star);
+
+        # S = list( set().union( V[0:i_star], S) ); # T_{i-star} = V[0 : i-star]
+        T = list(set(V[0:i_star]) - set(S))
+        S.extend(T)
+    
+    print( "--- Completed run (R2) on entire universe --- \n"); 
+
+    if (len(V) > 0 and len(S) < k): 
+        print( "LAS has failed. This should be an extremely rare event. Terminating program..." );
+        print( "V: ", V );
+        # print( "S: ", S );
+        exit(1);
+    
+    return S
+
+def Dist_LAS(objective, k, eps, V, q, a, comm, rank, size, C=[], p_root=0, seed=42, nthreads=16):
+
+    check_inputs(objective, k)
+    comm.barrier()
+    V_split_local = V[rank] #np.array_split(V, size)[rank]
+    
+    # # Compute the marginal addition for each elem in N, then add the best one to solution L; remove it from remaining elements N
+    # ele_A_local_vals = [ LAG_SingleNode(objective, k, eps, list(V_split_local.flatten()), C, seed, False, nthreads)]
+    ele_A_local_vals = [ LAS_SingleNode(V_split_local, objective, k, eps, q, a, C, seed, nthreads)]
+    ## return AlgRel()
+
+    # # Gather the partial results to all processes
+    ele_vals = comm.allgather(ele_A_local_vals)
+    
+    return [val for sublist in ele_vals for val in sublist]
+
+# Linear-DASH (Algorithm LDASH (Algorithm LDASH with LAS in the distributed setting + LAS in post processing))
+
+def LDASH(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=16):
+    '''
+    The parallelizable distributed linear-time greedy algorithm L-DASH. Uses multiple machines to obtain solution (Algorithm 1)
+    PARALLEL IMPLEMENTATION (Multithread)
+    
+    INPUTS:
+    class objective -- contains the methods 'value()' that we want to optimize and its marginal value function 'marginalval()' 
+    int k -- the cardinality constraint (must be k>0)
+    float eps -- the error tolerance between 0 and 1
+    comm -- the MPI4py Comm (MPI.COMM_WORLD)
+    int rank -- the processor's rank (comm.Get_rank())
+    int size -- the number of processors (comm.Get_size())
+
+    OPTIONAL INPUTS:
+    int seed -- random seed to use when drawing samples
+    bool stop_if_aprx: determines whether we exit as soon as we find OPT that reaches approx guarantee or keep searching for better solution
+    nthreads -- Number of threads to use on each machine
+
+    OUTPUTS:
+    list S -- the solution, where each element in the list is an element in the solution set.
+    float f(S) -- the value of the solution
+    time -- runtime of the algorithm
+    time_dist -- runtime spent on the distributed part of the algorithm
+    time_post -- runtime spent on the post processing part of the algorithm
+    ''' 
+
+    comm.barrier()
+    p_start = MPI.Wtime()
+    
+    # # Each processor gets the same random state 'q' so they can independently draw IDENTICAL random sequences .
+    q = np.random.RandomState(42)
+
+    random.seed(seed)
+
+    S = []
+    time_rounds = [0]
+    query_rounds = [0]
+    queries = 0
+    V_all = [ ele for ele in objective.groundset ];
+    
+    # random.Random(seed).shuffle(V)
+    V = [[] for i in range(size)]
+    a, valA = 0, 0
+    
+    # Randomly assigning elements to all the machines 
+    for ele in objective.groundset:
+        # valE = objective.value([ele])
+        
+        # if valE >= valA:
+        #     a = ele
+        #     valA = valE
+           
+        x = random.randint(0, size-1)
+        V[x].append(ele)
+    
+    # Obtaining the max singleton 'a'
+    currGains = parallel_margvals_returnvals(objective, S, objective.groundset, comm, rank, size)
+    # queries += len(objective.groundset)
+    a = np.argmax(currGains);
+
+    
+    # Removing the max singleton from the groundset
+    for i in range(size):
+        V[i] = list(set(V[i]) - set([a]))
+    
+    p_start_dist = MPI.Wtime()
+    S_DistGB_split = Dist_LAS(objective, k, eps, V, q, a, comm, rank, size, [], p_root, seed, nthreads)
+
+    S_DistGB = []
+    S_DistGB_all = []
+    for i in range(len(S_DistGB_split)):
+        S_DistGB.extend(list(S_DistGB_split[i]))
+        S_tmp = S_DistGB_split[i]
+        if(len(S_tmp)>k):
+            S_DistGB_all.append(list(S_tmp[len(S_tmp) - k : len(S_tmp)]))
+        else:
+            S_DistGB_all.append(list(S_tmp))
+    S_DistGB = list(np.unique(S_DistGB))
+    
+    
+    p_stop_dist = MPI.Wtime()
+    time_dist = (p_stop_dist - p_start_dist)
+
+    p_start_post = MPI.Wtime()
+
+    S_DistGreedy_split_vals = parallel_val_of_sets_thread(objective, S_DistGB_all, objective.nThreads)
+    
+    S_star = np.argmax(S_DistGreedy_split_vals)
+    
+    S_star_val = np.max(S_DistGreedy_split_vals)
+
+    T = LAS_SingleNode(S_DistGB, objective, k, eps, q, a, [], seed, nthreads=objective.nThreads)
+
+    if(len(T)>k):
+        T_star = T[len(T) - k : len(T)]
+    else:
+        T_star = T
+
+    if(objective.value(T_star)>S_star_val):
+        S = T_star
+    else:
+        S = list(S_DistGB_all[S_star])
+    
+    print(S)
+
+    p_stop = MPI.Wtime()
+    time_post = (p_stop - p_start_post)
+    time = (p_stop - p_start)
+    valSol = objective.value( S )
+    # Added increment
+    queries += 1
+    if rank == p_root:
+        print ('LDASH:', valSol, time, 'with k=', k, 'n=', len(objective.groundset), 'eps=', eps, '|S|=', len(S))
+    
+    return valSol, time, time_dist, time_post, S
+
+#############################################################
+
+def LAS_SingleNode_localMax(V_N, objective, k, eps, q, C, seed=42, nthreads=16):
+    '''
+    The parallelizable greedy algorithm LAS (Low-Adapive-Sequencing) using Single Node execution (OPTIMIZED IMPLEMENTATION)
+    
+    INPUTS:
+    class objective -- contains the methods 'value()' that we want to optimize and its marginal value function 'marginalval()' 
+    int k           -- the cardinality constraint (must be k>0)
+    float eps       -- the error tolerance between 0 and 1
+    int a           -- the max singleton assigned to every machine
+    comm            -- the MPI4py Comm (MPI.COMM_WORLD)
+    int rank        -- the processor's rank (comm.Get_rank())
+    int size        -- the number of processors (comm.Get_size())
+
+    OPTIONAL INPUTS:
+    int seed            -- random seed to use when drawing samples
+    bool stop_if_approx -- determines whether we exit as soon as we find OPT that reaches approx guarantee or keep searching for better solution
+
+    OUTPUTS:
+    float f(S)                  -- the value of the solution
+    int queries                 -- the total queries (marginal values count as 2 queries since f(T)-f(S) )
+    float time                  -- the processing time to optimize the function.
+    list S                      -- the solution, where each element in the list is an element in the solution set.
+    list of lists S_rounds      -- each element is a list containing the solution set S at the corresponding round.
+    list of lists time_rounds   -- each element is a list containing the time at the corresponding round
+    list of lists query_rounds  -- each element is a list containing the number of queries at the corresponding round
+    list singletonVals          -- each element is the current marginal gain of the corresponding element in groundset
+    '''  
+
+    
+    print( "\n --- Running LAS on N_i ---"); 
+
+    if(len(C) > 0):
+        V_N = list( set().union( C, V_N)); 
+    if(k >= len(V_N)):
+        return V_N
+
+    n = len(V_N)    
+
+    # Each processor gets its own random state so they can independently draw IDENTICAL random sequences a_seq.
+    #proc_random_states = [np.random.RandomState(seed) for processor in range(size)]
+    randstate = np.random.RandomState(seed)
+    queries = 0
+    
+    
+    # q.shuffle(V_ground)
+    currGains = parallel_margvals_returnvals_thread(objective, [], V_N, nthreads)
+    
+    #initialize S to max singleton
+    # S = [a]
+    S = [V_N[np.argmax(currGains)]];
+
+    queries += len(V_N)
+       
+    singletonIdcs = np.argsort(currGains);
+    singletonVals = currGains;
+    currGains = np.sort(currGains);
+    
+    print( "\n --- Running first on the top 3K max singleton ---"); 
+
+    #run first considering the top 3K singletons as the universe
+    V = np.array(V_N)[ singletonIdcs[-3*k:] ]
+    
+    currGains = currGains[-3*k:];
+    valtopk = np.sum( currGains[-k:] );
+
+
+    while len(V) > 0:
+        # Filtering
+        t = objective.value(S)/np.float(k)
+        queries += 1
+        
+        
+        #do lazy discard first, based on last round's computations
+        V_above_thresh = np.where(currGains >= t)[0]
+        V = list( set([ V[idx] for idx in V_above_thresh ] ));
+
+        #now recompute requisite gains
+        print( "|V|:", len(V), "  |S|:", len(S), "  t:", t );
+        print( "starting pmr..." );
+        
+        # currGains = parallel_margvals_returnvals(objective, S, [ele for ele in V], comm, rank, size)
+        currGains = parallel_margvals_returnvals_thread(objective, S, V, nthreads)
+        print("done.");
+        queries += len(V)
+        
+        
+        V_above_thresh = np.where(currGains >= t)[0]
+        V = [ V[idx] for idx in V_above_thresh ];
+        currGains = [ currGains[idx] for idx in V_above_thresh ];
+        ###End Filtering
+        
+        print( "R1 After Filtering-- |V|:", len(V), "  |S|:", len(S), "  t:", t );
+
+        if (len(V) == 0):
+            break;
+        
+        # Random Permutation
+        q.shuffle(V)
+        
+        print("R1 starting adaptiveAdd...");
+        B = parallel_adaptiveAdd_thread_LAS(V, S, objective, eps, k)
+        print("done.");
+        
+        queries += len( V );
+        
+        i_star = 0
+        
+
+        # ## PREVIOUS VERSION of LAS used the following
+        # for i in range(1, len(B)+1):
+        #     if(i <= k):
+        #         if(np.sum(B[0:i]) >= (1-eps)*i):
+        #             i_star = i
+        #     else:
+        #         if((np.sum(B[i-k:i]) >= (1-eps)*k) and (np.sum(B[0:i-k]) >= (1-eps)*(i-k))):
+        #             i_star = i
+
+        ### UPDATED VERSION of Conditions for LAS
+        for i in range(1, len(B)+1):
+            if(i <= k):
+                if(np.sum(B[0:i]) < (1-eps)*i):
+                    i_star = i-1
+                    break
+            elif(i <= len(B)):
+                if((np.sum(B[i-k:i]) < (1-eps)*k) or (np.sum(B[0:i-k]) < (1-eps)*(i-k))):
+                    i_star = i-1
+                    break
+            else:
+                i_star = len( B )
+
+        print( "R1 i_star: " , i_star);
+
+        # S = list( set().union( V[0:i_star], S) ); # T_{i-star} = V[0 : i-star]
+        T = list(set(V[0:i_star]) - set(S))
+        S.extend(T)
+
+    print( "--- Completed run on top 3K singletons --- ");   
+    #run second on the entire universe
+
+    t = objective.value(S) / np.float( k );
+    queries += 1
+    print( "--- Running on the entire universe with t=", t); 
+    
+    V_above_thresh = np.where(singletonVals >= t)[0]
+    V = [ V_N[idx] for idx in V_above_thresh ]; 
+    currGains = [ singletonVals[idx] for idx in V_above_thresh ];
+    
+    print( "R2 After pre-lazy discard |V| (>= t):", len(V)); 
+
+    while len(V) > 0:
+        # Filtering
+        t = objective.value(S)/np.float(k)
+        queries += 1
+        
+        #do lazy discard first, based on last round's computations
+        V_above_thresh = np.where(currGains >= t)[0]
+        V = list( set([ V[idx] for idx in V_above_thresh ] ));
+
+        print( "R2 |V|:", len(V), "  |S|:", len(S), "  t:", t );
+        #now recompute requisite gains
+        print( "R2 starting pmr..." );
+        currGains = parallel_margvals_returnvals_thread(objective, S, V, nthreads)
+    
+        #Added query increment
+        queries += len(V)
+        
+        #currGains = parallel_margvals_returnvals(objective, S, [ele for ele in V], comm, rank, size)
+        # if ( rank == 0):
+        #     print( "done.");
+        
+        V_above_thresh = np.where(currGains >= t)[0]
+        V = [ V[idx] for idx in V_above_thresh ];
+        currGains = [ currGains[idx] for idx in V_above_thresh ];
+
+        if (len(V) == 0):
+            break;
+        
+        print( "R2 After Filtering-- |V|:", len(V), "  |S|:", len(S), "  t:", t );
+
+        # Random Permutation
+        q.shuffle(V)
+        
+        print("R2 starting adaptiveAdd...");
+        B = parallel_adaptiveAdd_thread_LAS(V, S, objective, eps, k)
+        print("R2 done.");
+        
+        queries += len( V );
+        
+        i_star = 0
+        
+        # ## PREVIOUS VERSION of LAS used the following
+        # for i in range(1, len(B)+1):
+        #     if(i <= k):
+        #         if(np.sum(B[0:i]) >= (1-eps)*i):
+        #             i_star = i
+        #     else:
+        #         if((np.sum(B[i-k:i]) >= (1-eps)*k) and (np.sum(B[0:i-k]) >= (1-eps)*(i-k))):
+        #             i_star = i
+
+        ### UPDATED VERSION of Conditions for LAS
+        for i in range(1, len(B)+1):
+            if(i <= k):
+                if(np.sum(B[0:i]) < (1-eps)*i):
+                    i_star = i-1
+                    break
+            elif(i <= len(B)):
+                if((np.sum(B[i-k:i]) < (1-eps)*k) or (np.sum(B[0:i-k]) < (1-eps)*(i-k))):
+                    i_star = i-1
+                    break
+            else:
+                i_star = len( B )
+
+        print( "R2 i_star: " , i_star);
+
+        # S = list( set().union( V[0:i_star], S) ); # T_{i-star} = V[0 : i-star]
+        T = list(set(V[0:i_star]) - set(S))
+        S.extend(T)
+    
+    print( "--- Completed run (R2) on entire universe --- \n"); 
+
+    if (len(V) > 0 and len(S) < k): 
+        print( "LAS has failed. This should be an extremely rare event. Terminating program..." );
+        print( "V: ", V );
+        # print( "S: ", S );
+        exit(1);
+    
+    return S
+
+def Dist_LAS_localMax(objective, k, eps, V, q, comm, rank, size, C=[], p_root=0, seed=42, nthreads=16):
+
+    check_inputs(objective, k)
+    comm.barrier()
+    V_split_local = V[rank] #np.array_split(V, size)[rank]
+    
+    # # Compute the marginal addition for each elem in N, then add the best one to solution L; remove it from remaining elements N
+    # ele_A_local_vals = [ LAG_SingleNode(objective, k, eps, list(V_split_local.flatten()), C, seed, False, nthreads)]
+    ele_A_local_vals = [ LAS_SingleNode_localMax(V_split_local, objective, k, eps, q, C, seed, nthreads)]
+    ## return AlgRel()
+
+    # # Gather the partial results to all processes
+    ele_vals = comm.allgather(ele_A_local_vals)
+    
+    return [val for sublist in ele_vals for val in sublist]
+
+# Linear-DASH_localMax (Algorithm LDASH with S=[max singleton in N_i] instead of global max singleton)
+
+def LDASH_localMax(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=16):
+    '''
+    The parallelizable distributed linear-time greedy algorithm L-DASH. Uses multiple machines to obtain solution (Algorithm 1)
+    PARALLEL IMPLEMENTATION (Multithread)
+    
+    INPUTS:
+    class objective -- contains the methods 'value()' that we want to optimize and its marginal value function 'marginalval()' 
+    int k -- the cardinality constraint (must be k>0)
+    float eps -- the error tolerance between 0 and 1
+    comm -- the MPI4py Comm (MPI.COMM_WORLD)
+    int rank -- the processor's rank (comm.Get_rank())
+    int size -- the number of processors (comm.Get_size())
+
+    OPTIONAL INPUTS:
+    int seed -- random seed to use when drawing samples
+    bool stop_if_aprx: determines whether we exit as soon as we find OPT that reaches approx guarantee or keep searching for better solution
+    nthreads -- Number of threads to use on each machine
+
+    OUTPUTS:
+    list S -- the solution, where each element in the list is an element in the solution set.
+    float f(S) -- the value of the solution
+    time -- runtime of the algorithm
+    time_dist -- runtime spent on the distributed part of the algorithm
+    time_post -- runtime spent on the post processing part of the algorithm
+    ''' 
+
+    comm.barrier()
+    p_start = MPI.Wtime()
+    
+    # # Each processor gets the same random state 'q' so they can independently draw IDENTICAL random sequences .
+    q = np.random.RandomState(42)
+
+    random.seed(seed)
+
+    S = []
+    time_rounds = [0]
+    query_rounds = [0]
+    queries = 0
+    V_all = [ ele for ele in objective.groundset ];
+    
+    # random.Random(seed).shuffle(V)
+    V = [[] for i in range(size)]
+    # a, valA = 0, 0
+    
+    # Randomly assigning elements to all the machines 
+    for ele in objective.groundset:
+        # valE = objective.value([ele])
+        
+        # if valE >= valA:
+        #     a = ele
+        #     valA = valE
+           
+        x = random.randint(0, size-1)
+        V[x].append(ele)
+    
+    # # Obtaining the max singleton 'a'
+    # currGains = parallel_margvals_returnvals(objective, S, objective.groundset, comm, rank, size)
+    # # queries += len(objective.groundset)
+    # a = np.argmax(currGains);
+
+    
+    # # Removing the max singleton from the groundset
+    # for i in range(size):
+    #     V[i] = list(set(V[i]) - set([a]))
+    
+    p_start_dist = MPI.Wtime()
+    S_DistGB_split = Dist_LAS_localMax(objective, k, eps, V, q, comm, rank, size, [], p_root, seed, nthreads)
+
+    S_DistGB = []
+    S_DistGB_all = []
+    for i in range(len(S_DistGB_split)):
+        S_DistGB.extend(list(S_DistGB_split[i]))
+        S_tmp = S_DistGB_split[i]
+        if(len(S_tmp)>k):
+            S_DistGB_all.append(list(S_tmp[len(S_tmp) - k : len(S_tmp)]))
+        else:
+            S_DistGB_all.append(list(S_tmp))
+    S_DistGB = list(np.unique(S_DistGB))
+    
+    
+    p_stop_dist = MPI.Wtime()
+    time_dist = (p_stop_dist - p_start_dist)
+
+    p_start_post = MPI.Wtime()
+
+    S_DistGreedy_split_vals = parallel_val_of_sets_thread(objective, S_DistGB_all, objective.nThreads)
+    
+    S_star = S_DistGB_split[0] # np.argmax(S_DistGreedy_split_vals)
+    
+    S_star_val = objective.value(S_star) # np.max(S_DistGreedy_split_vals)
+
+    T = LAS_SingleNode_localMax(S_DistGB, objective, k, eps, q, [], seed, nthreads=objective.nThreads)
+
+    if(len(T)>k):
+        T_star = T[len(T) - k : len(T)]
+    else:
+        T_star = T
+
+    if(objective.value(T_star)>S_star_val):
+        S = T_star
+    else:
+        S = list(S_DistGB_all[S_star])
+    
+    print(S)
+
+    p_stop = MPI.Wtime()
+    time_post = (p_stop - p_start_post)
+    time = (p_stop - p_start)
+    valSol = objective.value( S )
+    # Added increment
+    queries += 1
+    if rank == p_root:
+        print ('LDASH-localMax:', valSol, time, 'with k=', k, 'n=', len(objective.groundset), 'eps=', eps, '|S|=', len(S))
+    
+    return valSol, time, time_dist, time_post, S
+
+#############################################################
+
+# Linear-DASH_LAG (Algorithm LDASH with LAS in the distributed setting + LAG in post processing)
+
+def LDASH_LAG(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=16):
+    '''
+    The parallelizable distributed linear-time greedy algorithm L-DASH. Uses multiple machines to obtain solution (Algorithm 1)
+    PARALLEL IMPLEMENTATION (Multithread)
+    
+    INPUTS:
+    class objective -- contains the methods 'value()' that we want to optimize and its marginal value function 'marginalval()' 
+    int k -- the cardinality constraint (must be k>0)
+    float eps -- the error tolerance between 0 and 1
+    comm -- the MPI4py Comm (MPI.COMM_WORLD)
+    int rank -- the processor's rank (comm.Get_rank())
+    int size -- the number of processors (comm.Get_size())
+
+    OPTIONAL INPUTS:
+    int seed -- random seed to use when drawing samples
+    bool stop_if_aprx: determines whether we exit as soon as we find OPT that reaches approx guarantee or keep searching for better solution
+    nthreads -- Number of threads to use on each machine
+
+    OUTPUTS:
+    list S -- the solution, where each element in the list is an element in the solution set.
+    float f(S) -- the value of the solution
+    time -- runtime of the algorithm
+    time_dist -- runtime spent on the distributed part of the algorithm
+    time_post -- runtime spent on the post processing part of the algorithm
+    ''' 
+
+    comm.barrier()
+    p_start = MPI.Wtime()
+    
+    # # Each processor gets the same random state 'q' so they can independently draw IDENTICAL random sequences .
+    q = np.random.RandomState(42)
+
+    random.seed(seed)
+
+    S = []
+    time_rounds = [0]
+    query_rounds = [0]
+    queries = 0
+    V_all = [ ele for ele in objective.groundset ];
+    
+    # random.Random(seed).shuffle(V)
+    V = [[] for i in range(size)]
+    # a, valA = 0, 0
+    
+    # Randomly assigning elements to all the machines 
+    for ele in objective.groundset:
+        # valE = objective.value([ele])
+        
+        # if valE >= valA:
+        #     a = ele
+        #     valA = valE
+           
+        x = random.randint(0, size-1)
+        V[x].append(ele)
+    
+    # # Obtaining the max singleton 'a'
+    # currGains = parallel_margvals_returnvals(objective, S, objective.groundset, comm, rank, size)
+    # # queries += len(objective.groundset)
+    # a = np.argmax(currGains);
+
+    
+    # # Removing the max singleton from the groundset
+    # for i in range(size):
+    #     V[i] = list(set(V[i]) - set([a]))
+    
+    p_start_dist = MPI.Wtime()
+    S_DistGB_split = Dist_LAS_localMax(objective, k, eps, V, q, comm, rank, size, [], p_root, seed, nthreads)
+
+    S_DistGB = []
+    S_DistGB_all = []
+    for i in range(len(S_DistGB_split)):
+        S_DistGB.extend(list(S_DistGB_split[i]))
+        S_tmp = S_DistGB_split[i]
+        if(len(S_tmp)>k):
+            S_DistGB_all.append(list(S_tmp[len(S_tmp) - k : len(S_tmp)]))
+        else:
+            S_DistGB_all.append(list(S_tmp))
+    S_DistGB = list(np.unique(S_DistGB))
+    
+    
+    p_stop_dist = MPI.Wtime()
+    time_dist = (p_stop_dist - p_start_dist)
+
+    p_start_post = MPI.Wtime()
+
+    S_DistGreedy_split_vals = parallel_val_of_sets_thread(objective, S_DistGB_all, objective.nThreads)
+    
+    S_star = S_DistGB_split[0] # np.argmax(S_DistGreedy_split_vals)
+    
+    S_star_val = objective.value(S_star) # np.max(S_DistGreedy_split_vals)
+
+    ##################################
+
+    T = LAG_SingleNode(objective, k, eps, S_DistGB, V_all, q, [], seed, stop_if_approx=False, nthreads=objective.nThreads)
+
+    if(objective.value(T)>S_star_val):
+        S = T
+    else:
+        S = list(S_DistGB_all[S_star])
+    # print(S)
+    p_stop = MPI.Wtime()
+    time_post = (p_stop - p_start_post)
+    time = (p_stop - p_start)
+    valSol = objective.value( S )
+
+    ##################################
+    # T = LAS_SingleNode_localMax(S_DistGB, objective, k, eps, q, [], seed, nthreads=objective.nThreads)
+
+    # if(len(T)>k):
+    #     T_star = T[len(T) - k : len(T)]
+    # else:
+    #     T_star = T
+
+    # if(objective.value(T_star)>S_star_val):
+    #     S = T_star
+    # else:
+    #     S = list(S_DistGB_all[S_star])
+    
+    ##################################
+    # print(S)
+
+    # p_stop = MPI.Wtime()
+    # time_post = (p_stop - p_start_post)
+    # time = (p_stop - p_start)
+    # valSol = objective.value( S )
+    # Added increment
+    queries += 1
+    if rank == p_root:
+        print ('LDASH-LAG:', valSol, time, 'with k=', k, 'n=', len(objective.groundset), 'eps=', eps, '|S|=', len(S))
+    
+    return valSol, time, time_dist, time_post, S
+
+#############################################################
+
+# Linear-DASH_LAS_LAG (Algorithm LDASH with LAS in the distributed setting + (LAS + LAG) in post processing)
+
+def LDASH_LAS_LAG(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=16):
+    '''
+    The parallelizable distributed linear-time greedy algorithm L-DASH. Uses multiple machines to obtain solution (Algorithm 7)
+    PARALLEL IMPLEMENTATION (Multithread)
+    
+    INPUTS:
+    class objective -- contains the methods 'value()' that we want to optimize and its marginal value function 'marginalval()' 
+    int k -- the cardinality constraint (must be k>0)
+    float eps -- the error tolerance between 0 and 1
+    comm -- the MPI4py Comm (MPI.COMM_WORLD)
+    int rank -- the processor's rank (comm.Get_rank())
+    int size -- the number of processors (comm.Get_size())
+
+    OPTIONAL INPUTS:
+    int seed -- random seed to use when drawing samples
+    bool stop_if_aprx: determines whether we exit as soon as we find OPT that reaches approx guarantee or keep searching for better solution
+    nthreads -- Number of threads to use on each machine
+
+    OUTPUTS:
+    list S -- the solution, where each element in the list is an element in the solution set.
+    float f(S) -- the value of the solution
+    time -- runtime of the algorithm
+    time_dist -- runtime spent on the distributed part of the algorithm
+    time_post -- runtime spent on the post processing part of the algorithm
+    ''' 
+
+    comm.barrier()
+    p_start = MPI.Wtime()
+    
+    # # Each processor gets the same random state 'q' so they can independently draw IDENTICAL random sequences .
+    q = np.random.RandomState(42)
+
+    random.seed(seed)
+
+    S = []
+    time_rounds = [0]
+    query_rounds = [0]
+    queries = 0
+    V_all = [ ele for ele in objective.groundset ];
+    
+    # random.Random(seed).shuffle(V)
+    V = [[] for i in range(size)]
+    # a, valA = 0, 0
+    
+    # Randomly assigning elements to all the machines 
+    for ele in objective.groundset:
+        # valE = objective.value([ele])
+        
+        # if valE >= valA:
+        #     a = ele
+        #     valA = valE
+           
+        x = random.randint(0, size-1)
+        V[x].append(ele)
+    
+    # # Obtaining the max singleton 'a'
+    # currGains = parallel_margvals_returnvals(objective, S, objective.groundset, comm, rank, size)
+    # # queries += len(objective.groundset)
+    # a = np.argmax(currGains);
+
+    
+    # # Removing the max singleton from the groundset
+    # for i in range(size):
+    #     V[i] = list(set(V[i]) - set([a]))
+    
+    p_start_dist = MPI.Wtime()
+    S_DistGB_split = Dist_LAS_localMax(objective, k, eps, V, q, comm, rank, size, [], p_root, seed, nthreads)
+
+    S_DistGB = []
+    S_DistGB_all = []
+    for i in range(len(S_DistGB_split)):
+        S_DistGB.extend(list(S_DistGB_split[i]))
+        S_tmp = S_DistGB_split[i]
+        if(len(S_tmp)>k):
+            S_DistGB_all.append(list(S_tmp[len(S_tmp) - k : len(S_tmp)]))
+        else:
+            S_DistGB_all.append(list(S_tmp))
+    S_DistGB = list(np.unique(S_DistGB))
+    
+    
+    p_stop_dist = MPI.Wtime()
+    time_dist = (p_stop_dist - p_start_dist)
+
+    p_start_post = MPI.Wtime()
+
+    S_DistGreedy_split_vals = parallel_val_of_sets_thread(objective, S_DistGB_all, objective.nThreads)
+    
+    S_star = S_DistGB_split[0] # np.argmax(S_DistGreedy_split_vals)
+    
+    S_star_val = objective.value(S_star) # np.max(S_DistGreedy_split_vals)
+
+    ##################################
+    # LAS on entire returned set from all machines (S_DistGB)
+    T_p = LAS_SingleNode_localMax(S_DistGB, objective, k, eps, q, [], seed, nthreads=objective.nThreads)
+    if(len(T_p)>k):
+        T_star = T_p[len(T_p) - k : len(T_p)]
+    else:
+        T_star = T_p
+    
+    ##################################
+    # p_start_post = MPI.Wtime()
+    # Compute alpha = 1/(4+(...)), gamma = f(T_star) and call LAG on the entire groundset from all machines (S_DistGB)
+    alpha = 1/(4*(1+(eps*(2-eps)/((1-eps)*(1-(2*eps))))))
+    Gamma = objective.value(T_star)
+    T = LAG_SingleNode(objective, k, eps, S_DistGB, V_all, q, [], seed, stop_if_approx=False, nthreads=objective.nThreads, alpha=alpha, Gamma=Gamma)
+    
+    ##################################
+    # S = argmax (S_star, T_star, T)
+    if(objective.value(T) >= objective.value(T_star) and objective.value(T) >= S_star_val):
+        S = T
+    elif(objective.value(T_star) >= objective.value(T) and objective.value(T_star) >= S_star_val):
+        S = T_star
+    else:
+        S = list(S_DistGB_all[S_star])
+    
+    # print(S)
+    p_stop = MPI.Wtime()
+    time_post = (p_stop - p_start_post)
+    time = (p_stop - p_start)
+    valSol = objective.value( S )
+
+    ##################################
+    # T = LAS_SingleNode_localMax(S_DistGB, objective, k, eps, q, [], seed, nthreads=objective.nThreads)
+
+    # if(len(T)>k):
+    #     T_star = T[len(T) - k : len(T)]
+    # else:
+    #     T_star = T
+
+    # if(objective.value(T_star)>S_star_val):
+    #     S = T_star
+    # else:
+    #     S = list(S_DistGB_all[S_star])
+    
+    ##################################
+    # print(S)
+
+    # p_stop = MPI.Wtime()
+    # time_post = (p_stop - p_start_post)
+    # time = (p_stop - p_start)
+    # valSol = objective.value( S )
+    # Added increment
+    queries += 1
+    if rank == p_root:
+        print ('LDASH-LAS-LAG:', valSol, time, 'with k=', k, 'n=', len(objective.groundset), 'eps=', eps, '|S|=', len(S))
+    
+    return valSol, time, time_dist, time_post, S
+
+#############################################################
+
 
 # MED (Algorithm 4)
 # Utility functions for MED runinng DASH (S_prev is passed to every routine for computation)
@@ -934,7 +2010,7 @@ def MED_margvals_of_sets_returnvals(objective, sets, S):
     
     return set_vals_local_vals
 
-def MED_parallel_margvals_of_sets_threads(objective, list_of_sets, S, nthreads=4):
+def MED_parallel_margvals_of_sets_threads(objective, list_of_sets, S, nthreads=16):
     ''' Parallel-compute the value f(S) of each set (sublist) in list_of_sets, return ordered list of corresponding values f(S) '''
     nthreads_rank = objective.nThreads
     list_split_local = np.array_split(list_of_sets, nthreads_rank)
@@ -1071,7 +2147,9 @@ def MED_LAT_SingleNode(V, S, V_all, V_ground, q, objective, tau, eps, delta, k, 
         for i in range(lmbda_star, len(B)):
             if (B[i]):
                 T = set().union(T, seq[ lmbda[ i - 1 ] : lmbda[ i ] ]);
-        S= list(set().union(S, T))
+        T = list( set(T)-set(S) )
+        # S= list(set().union(S, T))
+        S.extend(T)
         V = list( np.sort( list( set(V)-set(S) ) ) );
 
         #Filter
@@ -1098,7 +2176,7 @@ def MED_LAT_SingleNode(V, S, V_all, V_ground, q, objective, tau, eps, delta, k, 
             
     return [pastGains, S, queries];
 
-def MED_LAG_SingleNode(objective, k, eps, V, V_all, q, C, S_prev, seed=42, stop_if_approx=True, nthreads=4):
+def MED_LAG_SingleNode(objective, k, eps, V, V_all, q, C, S_prev, seed=42, stop_if_approx=False, nthreads=16):
 
     '''
     The algorithm LAG using Single Node execution for Submodular Mazimization.
@@ -1126,8 +2204,8 @@ def MED_LAG_SingleNode(objective, k, eps, V, V_all, q, C, S_prev, seed=42, stop_
         V = list( set().union( C, V)); 
     if(k >= len(V)):
         return V
-    # Gamma, sol, pastGains = ParallelLinearSeq_SingleNode_ParallelAlgo(objective, k, eps_FLS, V, seed, True, nthreads=4, return_all=True );
-    pastGains = parallel_margvals_returnvals_thread(objective, S_prev, V, nthreads=4)
+    # Gamma, sol, pastGains = ParallelLinearSeq_SingleNode_ParallelAlgo(objective, k, eps_FLS, V, seed, True, nthreads=16, return_all=True );
+    pastGains = parallel_margvals_returnvals_thread(objective, S_prev, V, nthreads=16)
     
     alpha = 1.0 / k
     valtop = np.max( pastGains);
@@ -1150,7 +2228,7 @@ def MED_LAG_SingleNode(objective, k, eps, V, V_all, q, C, S_prev, seed=42, stop_
         V_above_thresh_ids = np.where(pastGains >= tau)[0]
         V_above_thresh = [ V[ele] for ele in V_above_thresh_ids ];
         V_above_thresh = list( set(V_above_thresh) - set(S).union(S_prev));
-        currGains = parallel_margvals_returnvals_thread(objective, list( set(S).union(S_prev)), V_above_thresh, nthreads=4)
+        currGains = parallel_margvals_returnvals_thread(objective, list( set(S).union(S_prev)), V_above_thresh, nthreads=16)
         
         for ps in range( len(V_above_thresh )):
             pastGains[ V_above_thresh_ids[ps]] = currGains[ ps ];
@@ -1173,7 +2251,7 @@ def MED_LAG_SingleNode(objective, k, eps, V, V_all, q, C, S_prev, seed=42, stop_
     
     return Ap
 
-def MED_Dist_LAG(objective, k, eps, V, V_all, q, comm, rank, size, S_prev, C=[],  p_root=0, seed=42, stop_if_apx=False, nthreads=4):
+def MED_Dist_LAG(objective, k, eps, V, V_all, q, comm, rank, size, S_prev, C=[],  p_root=0, seed=42, stop_if_apx=False, nthreads=16):
 
     check_inputs(objective, k)
     comm.barrier()
@@ -1189,7 +2267,7 @@ def MED_Dist_LAG(objective, k, eps, V, V_all, q, comm, rank, size, S_prev, C=[],
     
     return [val for sublist in ele_vals for val in sublist]
 
-def MED_DASH(objective, k, S_prev, eps, comm, rank, size, p_root=0, seed=42, stop_if_aprx=False, nthreads=4):
+def MED_DASH(objective, k, S_prev, eps, comm, rank, size, p_root=0, seed=42, stop_if_aprx=False, nthreads=16):
     '''
     The parallelizable distributed greedy algorithm DASH. Uses multiple machines to obtain solution (Algorithm 1)
     PARALLEL IMPLEMENTATION (Multithread)
@@ -1253,7 +2331,7 @@ def MED_DASH(objective, k, S_prev, eps, comm, rank, size, p_root=0, seed=42, sto
 
     p_start_post = MPI.Wtime()
 
-    S_DistGreedy_split_vals = MED_parallel_margvals_of_sets_threads(objective, S_DistGB_all, S_prev, nthreads=4)
+    S_DistGreedy_split_vals = MED_parallel_margvals_of_sets_threads(objective, S_DistGB_all, S_prev, nthreads=16)
     # S_DistGreedy_split_vals = parallel_val_of_sets_thread(objective, S_DistGB_all, objective.nThreads)
     
     S_p = np.argmax(S_DistGreedy_split_vals)
@@ -1261,16 +2339,18 @@ def MED_DASH(objective, k, S_prev, eps, comm, rank, size, p_root=0, seed=42, sto
     S_p_val = np.max(S_DistGreedy_split_vals)
 
     T = MED_LAG_SingleNode(objective, k, eps, S_DistGB, V_all, q, [], S_prev, seed, stop_if_aprx, nthreads=objective.nThreads)
-
-    if(objective.value(T)>S_p_val):
+    
+    # if(objective.value(T)>S_p_val):
+    if(objective.marginalval( T, S_prev )>S_p_val):
         S = T
     else:
         S = list(S_DistGB_all[S_p])
-    print(S)
+    # print(S)
     p_stop = MPI.Wtime()
     time_post = (p_stop - p_start_post)
     time = (p_stop - p_start)
-    valSol = objective.value( S )
+    # valSol = objective.value( S )
+    valSol = objective.marginalval( S, S_prev )
     # Added increment
     queries += 1
     if rank == p_root:
@@ -1278,7 +2358,7 @@ def MED_DASH(objective, k, S_prev, eps, comm, rank, size, p_root=0, seed=42, sto
     
     return S
 
-def MEDDASH(objective, k, eps, comm, rank, size, p_root, seed=42, nthreads=4):
+def MEDDASH(objective, k, eps, comm, rank, size, p_root, seed=42, nthreads=16):
     '''
     The parallelizable distributed greedy algorithm MED running DASH over multiple rounds. Uses multiple machines to obtain solution (Algorithm 4)
     PARALLEL IMPLEMENTATION (Multithread)
@@ -1327,16 +2407,471 @@ def MEDDASH(objective, k, eps, comm, rank, size, p_root, seed=42, nthreads=4):
     for i in range(0,iters):
         p_start_dist = MPI.Wtime()
         if(k - len(S) < k_p): #Last iteration
-            k_p = k - k_p
+            k_p = k - len(S)
+        if(rank==0):
+            print("(MEDDASH) iter: ", i, "  k_p:", k_p, "  k:",k,"  objective.value( S ):", objective.value( S ) ,"  len(S):", len(S),"  S:", S)
         T = MED_DASH(objective, k_p, S, eps, comm, rank, size, p_root, seed, False, nthreads)
-        # valSolT, queriesT, timeT, T, T_DistGB_split, time_roundsT, query_roundsT = RandGreedI_PGB(objective, k_split, eps, comm, rank, size, p_root=0, seed=42, stop_if_apx=False, nthreads=4)
+        # valSolT, queriesT, timeT, T, T_DistGB_split, time_roundsT, query_roundsT = RandGreedI_PGB(objective, k_split, eps, comm, rank, size, p_root=0, seed=42, stop_if_apx=False, nthreads=16)
         comm.barrier()
         p_stop_dist = MPI.Wtime()
         time_dist += (p_stop_dist - p_start_dist)
         T_DistGB = list(np.unique(T))
-        
+        T_DistGB = list(set(T_DistGB) - set(S))
         comm.barrier()
         
+        S.extend(T_DistGB)
+        S = list(np.unique(S))
+        S_rounds.append(S)
+        if(rank==0):
+            print("(MEDDASH) Iteration: ", i, "  Len(S):", len(S), "  Val(S): ", objective.value( S ), "  MargeVal(T): ", objective.marginalval(T_DistGB, S))
+        if (len(S) >= k):
+            # S = S[-k:]
+            break;
+
+    comm.barrier()
+    # print("OUTSIDE FOR LOOP")
+    # if len(S) > K, select last k elements added
+    S = np.unique(S)
+    if len(S) > k:
+        S = S[-k:]
+    p_stop = MPI.Wtime()
+    time = (p_stop - p_start)
+    valSol = objective.value( S )
+    # Added increment
+    queries += 1
+    if rank == p_root:
+        print ('MED+DASH:', valSol, queries, time, 'with k=', k, 'n=', len(objective.groundset), 'eps=', eps, '|S|=', len(S))
+
+    return valSol, time, time_dist, time_post, S
+
+
+'''
+Journal Version Additional Algorithms
+'''
+#############################################################
+
+# Utility functions for MED runinng LDASH (S_prev is passed to every routine for computation)
+def MED_adaptiveAdd_thread_LAS(idcs, V, S, S_prev, objective, eps, k):
+    B = []
+    if ( len( idcs ) > 0 ):
+        
+        S_union_T = list( set().union( V[0 : idcs[0]], S) ); # T_{i-1} = V[0 : idcs[i]]
+        valS_union_T = objective.marginalval( S_union_T, S_prev );
+
+        for v_i in idcs:
+            S_union_T = list( set().union( [V[v_i]], S_union_T) );
+            gain = objective.marginalval( S_union_T, S_prev ) - valS_union_T;
+            thresh = valS_union_T / np.float(k);
+            
+            if (gain >= thresh):
+                B.append(True)
+            else:
+                B.append(False)
+            
+            valS_union_T = valS_union_T + gain;
+    
+    # Gather the partial results to all processes
+    
+    return B
+
+def MED_parallel_adaptiveAdd_thread_LAS(V, S, S_prev, objective, eps, k):
+    
+    '''
+    Parallel-compute the marginal value of block  of elements and set the corresponding flag to True based on condition in LINE 13 of ALG. 1
+    '''
+    #Dynamically obtaining the number of threads fr parallel computation
+    # nthreads_rank = multiprocessing.cpu_count()
+    nthreads = objective.nThreads
+    idcs = np.array_split( range( len( V ) ), nthreads )
+    #lmbda_split_local = np.array_split(lmbda, size)[rank]
+    #with concurrent.futures.ProcessPoolExecutor(max_workers=nthreads) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=nthreads) as executor:
+        futures = [executor.submit(MED_adaptiveAdd_thread_LAS, split, V, S, S_prev, objective, eps, k) for split in idcs]
+        return_value = [f.result() for f in futures]
+
+    B = []
+    for i in range(len(return_value)):
+        B.extend(return_value[i])
+    return B
+
+def MED_LAS_SingleNode(V_N, objective, k, eps, q, a, S_prev, C, seed=42, nthreads=16):
+    '''
+    The parallelizable greedy algorithm LAS (Low-Adapive-Sequencing) using Single Node execution (OPTIMIZED IMPLEMENTATION)
+    
+    INPUTS:
+    class objective -- contains the methods 'value()' that we want to optimize and its marginal value function 'marginalval()' 
+    int k           -- the cardinality constraint (must be k>0)
+    float eps       -- the error tolerance between 0 and 1
+    int a           -- the max singleton assigned to every machine
+    comm            -- the MPI4py Comm (MPI.COMM_WORLD)
+    int rank        -- the processor's rank (comm.Get_rank())
+    int size        -- the number of processors (comm.Get_size())
+
+    OPTIONAL INPUTS:
+    int seed            -- random seed to use when drawing samples
+    bool stop_if_approx -- determines whether we exit as soon as we find OPT that reaches approx guarantee or keep searching for better solution
+
+    OUTPUTS:
+    float f(S)                  -- the value of the solution
+    int queries                 -- the total queries (marginal values count as 2 queries since f(T)-f(S) )
+    float time                  -- the processing time to optimize the function.
+    list S                      -- the solution, where each element in the list is an element in the solution set.
+    list of lists S_rounds      -- each element is a list containing the solution set S at the corresponding round.
+    list of lists time_rounds   -- each element is a list containing the time at the corresponding round
+    list of lists query_rounds  -- each element is a list containing the number of queries at the corresponding round
+    list singletonVals          -- each element is the current marginal gain of the corresponding element in groundset
+    '''  
+
+    if(len(C) > 0):
+        V_N = list( set().union( C, V_N)); 
+    if(k >= len(V_N)):
+        return V_N
+
+    n = len(V_N)    
+
+    # Each processor gets its own random state so they can independently draw IDENTICAL random sequences a_seq.
+    #proc_random_states = [np.random.RandomState(seed) for processor in range(size)]
+    randstate = np.random.RandomState(seed)
+    queries = 0
+    #initialize S to max singleton
+    S = [a]
+    
+    # q.shuffle(V_ground)
+    currGains = parallel_margvals_returnvals_thread(objective, list( set(S).union(S_prev)), V_N, nthreads)
+    
+    queries += len(V_N)
+        
+    # S = [np.argmax(currGains)];
+    singletonIdcs = np.argsort(currGains);
+    singletonVals = currGains;
+    currGains = np.sort(currGains);
+    
+    #run first considering the top 3K singletons as the universe
+    V = np.array(V_N)[ singletonIdcs[-3*k:] ]
+    
+    currGains = currGains[-3*k:];
+    valtopk = np.sum( currGains[-k:] );
+
+    while len(V) > 0:
+        # Filtering
+        t = objective.marginalval(S, S_prev)/np.float(k)
+        queries += 1
+        
+        
+        #do lazy discard first, based on last round's computations
+        V_above_thresh = np.where(currGains >= t)[0]
+        V = list( set([ V[idx] for idx in V_above_thresh ] ));
+
+        #now recompute requisite gains
+        # print( len(V) );
+        # print( "starting pmr..." );
+        
+        # currGains = parallel_margvals_returnvals(objective, S, [ele for ele in V], comm, rank, size)
+        currGains = parallel_margvals_returnvals_thread(objective, list( set(S).union(S_prev)), V, nthreads)
+    
+        queries += len(V)
+        
+        
+        V_above_thresh = np.where(currGains >= t)[0]
+        V = [ V[idx] for idx in V_above_thresh ];
+        currGains = [ currGains[idx] for idx in V_above_thresh ];
+        ###End Filtering
+        
+        #     print( len(V) );
+
+        if (len(V) == 0):
+            break;
+        
+        # Random Permutation
+        q.shuffle(V)
+        
+        # print("starting adaptiveAdd...");
+        B = MED_parallel_adaptiveAdd_thread_LAS(V, S, S_prev, objective, eps, k)
+        # print("done.");
+        
+        queries += len( V );
+        
+        i_star = 0
+        
+        for i in range(1, len(B)+1):
+            if(i <= k):
+                if(np.sum(B[0:i]) >= (1-eps)*i):
+                    i_star = i
+            else:
+                if((np.sum(B[i-k:i]) >= (1-eps)*k) and (np.sum(B[0:i-k]) >= (1-eps)*(i-k))):
+                    i_star = i
+        
+        # print( "i_Star: " , i_Star);
+
+        # S = list( set().union( V[0:i_star], S) ); # T_{i-star} = V[0 : i-star]
+        T = list(set(V[0:i_star]) - set(S))
+        S.extend(T)
+        
+    #run second on the entire universe
+
+    t = objective.marginalval(S, S_prev) / np.float( k );
+    queries += 1
+    
+    V_above_thresh = np.where(singletonVals >= t)[0]
+    V = [ V_N[idx] for idx in V_above_thresh ]; 
+    currGains = [ singletonVals[idx] for idx in V_above_thresh ];
+    
+    while len(V) > 0:
+        # Filtering
+        t = objective.marginalval(S, S_prev)/np.float(k)
+        queries += 1
+        
+        #do lazy discard first, based on last round's computations
+        V_above_thresh = np.where(currGains >= t)[0]
+        V = list( set([ V[idx] for idx in V_above_thresh ] ));
+
+        #now recompute requisite gains
+        # print( "starting pmr..." );
+        currGains = parallel_margvals_returnvals_thread(objective, list( set(S).union(S_prev)), V, nthreads)
+    
+        #Added query increment
+        queries += len(V)
+        
+        #currGains = parallel_margvals_returnvals(objective, S, [ele for ele in V], comm, rank, size)
+        # if ( rank == 0):
+        #     print( "done.");
+        
+        V_above_thresh = np.where(currGains >= t)[0]
+        V = [ V[idx] for idx in V_above_thresh ];
+        currGains = [ currGains[idx] for idx in V_above_thresh ];
+
+        if (len(V) == 0):
+            break;
+        
+        # if (rank == p_root):
+        #     print( len(V) );
+
+        # Random Permutation
+        q.shuffle(V)
+        
+        # print("starting adaptiveAdd...");
+        B = MED_parallel_adaptiveAdd_thread_LAS(V, S, S_prev, objective, eps, k)
+        # print("done.");
+        
+        queries += len( V );
+        
+        i_star = 0
+        
+        for i in range(1, len(B)+1):
+            if(i <= k):
+                if(np.sum(B[0:i]) >= (1-eps)*i):
+                    i_star = i
+            else:
+                if((np.sum(B[i-k:i]) >= (1-eps)*k) and (np.sum(B[0:i-k]) >= (1-eps)*(i-k))):
+                    i_star = i
+
+        # print( "i_Star: " , i_Star);
+
+        # S = list( set().union( V[0:i_star], S) ); # T_{i-star} = V[0 : i-star]
+        T = list(set(V[0:i_star]) - set(S))
+        S.extend(T)
+    
+    if (len(V) > 0 and len(S) < k): 
+        print( "LAS has failed. This should be an extremely rare event. Terminating program..." );
+        print( "V: ", V );
+        # print( "S: ", S );
+        exit(1);
+    
+    return S
+
+def MED_Dist_LAS(objective, k, eps, V, q, a, comm, rank, size, S_prev, C=[], p_root=0, seed=42, nthreads=16):
+
+    check_inputs(objective, k)
+    comm.barrier()
+    V_split_local = V[rank] #np.array_split(V, size)[rank]
+    
+    # # Compute the marginal addition for each elem in N, then add the best one to solution L; remove it from remaining elements N
+    # ele_A_local_vals = [ LAG_SingleNode(objective, k, eps, list(V_split_local.flatten()), C, seed, False, nthreads)]
+    ele_A_local_vals = [ MED_LAS_SingleNode(V_split_local, objective, k, eps, q, a, S_prev, C, seed, nthreads)]
+    ## return AlgRel()
+
+    # # Gather the partial results to all processes
+    ele_vals = comm.allgather(ele_A_local_vals)
+    
+    return [val for sublist in ele_vals for val in sublist]
+
+def MED_LDASH(objective, k, eps, comm, rank, size, S_prev, p_root=0, seed=42, nthreads=16):
+    '''
+    The parallelizable distributed linear-time greedy algorithm L-DASH. Uses multiple machines to obtain solution (Algorithm 1)
+    PARALLEL IMPLEMENTATION (Multithread)
+    
+    INPUTS:
+    class objective -- contains the methods 'value()' that we want to optimize and its marginal value function 'marginalval()' 
+    int k -- the cardinality constraint (must be k>0)
+    float eps -- the error tolerance between 0 and 1
+    comm -- the MPI4py Comm (MPI.COMM_WORLD)
+    int rank -- the processor's rank (comm.Get_rank())
+    int size -- the number of processors (comm.Get_size())
+    list S_prev -- the solution S from the previous iteration
+
+    OPTIONAL INPUTS:
+    int seed -- random seed to use when drawing samples
+    bool stop_if_aprx: determines whether we exit as soon as we find OPT that reaches approx guarantee or keep searching for better solution
+    nthreads -- Number of threads to use on each machine
+
+    OUTPUTS:
+    list S -- the solution, where each element in the list is an element in the solution set.
+    float f(S) -- the value of the solution
+    time -- runtime of the algorithm
+    time_dist -- runtime spent on the distributed part of the algorithm
+    time_post -- runtime spent on the post processing part of the algorithm
+    ''' 
+
+    comm.barrier()
+    p_start = MPI.Wtime()
+    
+    # # Each processor gets the same random state 'q' so they can independently draw IDENTICAL random sequences .
+    q = np.random.RandomState(42)
+
+    random.seed(seed)
+
+    S = []
+    time_rounds = [0]
+    query_rounds = [0]
+    queries = 0
+    V_all = [ ele for ele in objective.groundset ];
+    
+    # random.Random(seed).shuffle(V)
+    V = [[] for i in range(size)]
+    a, valA = 0, 0
+    
+    # Randomly assigning elements to all the machines 
+    for ele in objective.groundset:
+        # valE = objective.value([ele])
+        
+        # if valE >= valA:
+        #     a = ele
+        #     valA = valE
+           
+        x = random.randint(0, size-1)
+        V[x].append(ele)
+    
+    # Obtaining the max singleton
+    currGains = parallel_margvals_returnvals(objective, S, objective.groundset, comm, rank, size)
+    # queries += len(objective.groundset)
+    a = np.argmax(currGains);
+
+    # Removing the max singleton from the groundset
+    for i in range(size):
+        V[i] = list(set(V[i]) - set([a]))
+
+    p_start_dist = MPI.Wtime()
+    S_DistGB_split = MED_Dist_LAS(objective, k, eps, V, q, a, comm, rank, size, S_prev, [], p_root, seed, nthreads)
+
+    S_DistGB = []
+    S_DistGB_all = []
+    for i in range(len(S_DistGB_split)):
+        S_DistGB.extend(list(S_DistGB_split[i]))
+        S_tmp = S_DistGB_split[i]
+        if(len(S_tmp)>k):
+            S_DistGB_all.append(list(S_tmp[len(S_tmp) - k : len(S_tmp)]))
+        else:
+            S_DistGB_all.append(list(S_tmp))
+    S_DistGB = list(np.unique(S_DistGB))
+    
+    
+    p_stop_dist = MPI.Wtime()
+    time_dist = (p_stop_dist - p_start_dist)
+
+    p_start_post = MPI.Wtime()
+
+    S_DistGreedy_split_vals = MED_parallel_margvals_of_sets_threads(objective, S_DistGB_all, S_prev, objective.nThreads)
+    # S_DistGreedy_split_vals = parallel_val_of_sets_thread(objective, S_DistGB_all, objective.nThreads)
+    
+    S_star = np.argmax(S_DistGreedy_split_vals)
+    
+    S_star_val = np.max(S_DistGreedy_split_vals)
+
+    T = MED_LAS_SingleNode(S_DistGB, objective, k, eps, q, a, S_prev, [], seed, nthreads=objective.nThreads)
+
+    if(len(T)>k):
+        T_star = T[len(T) - k : len(T)]
+    else:
+        T_star = T
+
+    if(objective.value(T_star)>S_star_val):
+        S = T_star
+    else:
+        S = list(S_DistGB_all[S_star])
+    
+    print(S)
+
+    p_stop = MPI.Wtime()
+    time_post = (p_stop - p_start_post)
+    time = (p_stop - p_start)
+    valSol = objective.value( S )
+    # Added increment
+    queries += 1
+    if rank == p_root:
+        print ('MED_LDASH:', valSol, time, 'with k=', k, 'n=', len(objective.groundset), 'eps=', eps, '|S|=', len(S))
+    
+    return S
+
+def MEDLDASH(objective, k, eps, comm, rank, size, p_root, seed=42, nthreads=16):
+    '''
+    The parallelizable distributed greedy algorithm MED running LDASH over multiple rounds. Uses multiple machines to obtain solution (Algorithm )
+    PARALLEL IMPLEMENTATION (Multithread)
+    
+    INPUTS:
+    class objective -- contains the methods 'value()' that we want to optimize and its marginal value function 'marginalval()' 
+    int k -- the cardinality constraint (must be k>0)
+    list S_prev -- the solution S from the previous iteration
+    float eps -- the error tolerance between 0 and 1
+    comm -- the MPI4py Comm (MPI.COMM_WORLD)
+    int rank -- the processor's rank (comm.Get_rank())
+    int size -- the number of processors (comm.Get_size())
+
+    OPTIONAL INPUTS:
+    int seed -- random seed to use when drawing samples
+    bool stop_if_aprx: determines whether we exit as soon as we find OPT that reaches approx guarantee or keep searching for better solution
+    nthreads -- Number of threads to use on each machine
+
+    OUTPUTS:
+    list S -- the solution, where each element in the list is an element in the solution set.
+    float f(S) -- the value of the solution
+    time -- runtime of the algorithm
+    time_dist -- runtime spent on the distributed part of the algorithm
+    time_post -- runtime spent on the post processing part of the algorithm
+    '''
+
+    comm.barrier()
+    p_start = MPI.Wtime()
+    
+    S = []
+    S_rounds = [[]]
+    time_rounds = [0]
+    query_rounds = [0]
+    queries = 0
+    V = [ ele for ele in objective.groundset ];
+    np.random.shuffle(V)
+    #k_max = np.max(k)iter
+    beta = 1
+    k_p = int(np.ceil(beta * len(objective.groundset)/ (size ** 2)))
+    iters = int(np.ceil(k/k_p))
+    k_p = min(k, k_p)
+    if(rank==0):
+        print("iters: ", iters, "  k_p:", k_p, "  k:",k)
+    time_post = 0
+    time_dist = 0
+    for i in range(0,iters):
+        p_start_dist = MPI.Wtime()
+        if(k - len(S) < k_p): #Last iteration
+            k_p = k - len(S)
+        T = MED_LDASH(objective, k_p, eps, comm, rank, size, S, p_root, seed, nthreads)
+        # valSolT, queriesT, timeT, T, T_DistGB_split, time_roundsT, query_roundsT = RandGreedI_PGB(objective, k_split, eps, comm, rank, size, p_root=0, seed=42, stop_if_apx=False, nthreads=16)
+        comm.barrier()
+        p_stop_dist = MPI.Wtime()
+        time_dist += (p_stop_dist - p_start_dist)
+        # print("T:", T)
+        T_DistGB = list(set(T))
+        
+        comm.barrier()
+        T_DistGB = list(set(T_DistGB) - set(S))
         S.extend(T_DistGB)
         S = list(np.unique(S))
         S_rounds.append(S)
@@ -1358,14 +2893,644 @@ def MEDDASH(objective, k, eps, comm, rank, size, p_root, seed=42, nthreads=4):
     # Added increment
     queries += 1
     if rank == p_root:
-        print ('MED:', valSol, queries, time, 'with k=', k, 'n=', len(objective.groundset), 'eps=', eps, '|S|=', len(S))
+        print ('MED+LDASH:', valSol, queries, time, 'with k=', k, 'n=', len(objective.groundset), 'eps=', eps, '|S|=', len(S))
 
     return valSol, time, time_dist, time_post, S
 
+#############################################################
+
+def MED_LAS_SingleNode_localMax(V_N, objective, k, eps, q, S_prev, C, seed=42, nthreads=16):
+    '''
+    The parallelizable greedy algorithm LAS (Low-Adapive-Sequencing) using Single Node execution (OPTIMIZED IMPLEMENTATION)
+    
+    INPUTS:
+    class objective -- contains the methods 'value()' that we want to optimize and its marginal value function 'marginalval()' 
+    int k           -- the cardinality constraint (must be k>0)
+    float eps       -- the error tolerance between 0 and 1
+    int a           -- the max singleton assigned to every machine
+    comm            -- the MPI4py Comm (MPI.COMM_WORLD)
+    int rank        -- the processor's rank (comm.Get_rank())
+    int size        -- the number of processors (comm.Get_size())
+
+    OPTIONAL INPUTS:
+    int seed            -- random seed to use when drawing samples
+    bool stop_if_approx -- determines whether we exit as soon as we find OPT that reaches approx guarantee or keep searching for better solution
+
+    OUTPUTS:
+    float f(S)                  -- the value of the solution
+    int queries                 -- the total queries (marginal values count as 2 queries since f(T)-f(S) )
+    float time                  -- the processing time to optimize the function.
+    list S                      -- the solution, where each element in the list is an element in the solution set.
+    list of lists S_rounds      -- each element is a list containing the solution set S at the corresponding round.
+    list of lists time_rounds   -- each element is a list containing the time at the corresponding round
+    list of lists query_rounds  -- each element is a list containing the number of queries at the corresponding round
+    list singletonVals          -- each element is the current marginal gain of the corresponding element in groundset
+    '''  
+
+    if(len(C) > 0):
+        V_N = list( set().union( C, V_N)); 
+    if(k >= len(V_N)):
+        return V_N
+
+    n = len(V_N)    
+
+    # Each processor gets its own random state so they can independently draw IDENTICAL random sequences a_seq.
+    #proc_random_states = [np.random.RandomState(seed) for processor in range(size)]
+    randstate = np.random.RandomState(seed)
+    queries = 0
+    
+    
+    # q.shuffle(V_ground)
+    currGains = parallel_margvals_returnvals_thread(objective, list( S_prev), V_N, nthreads)
+    
+    queries += len(V_N)
+
+    #initialize S to max singleton
+    # S = [a]    
+    S = [V_N[np.argmax(currGains)]];
+
+    singletonIdcs = np.argsort(currGains);
+    singletonVals = currGains;
+    currGains = np.sort(currGains);
+    
+    #run first considering the top 3K singletons as the universe
+    V = np.array(V_N)[ singletonIdcs[-3*k:] ]
+    
+    currGains = currGains[-3*k:];
+    valtopk = np.sum( currGains[-k:] );
+
+    while len(V) > 0:
+        # Filtering
+        t = objective.marginalval(S, S_prev)/np.float(k)
+        queries += 1
+        
+        
+        #do lazy discard first, based on last round's computations
+        V_above_thresh = np.where(currGains >= t)[0]
+        V = list( set([ V[idx] for idx in V_above_thresh ] ));
+
+        #now recompute requisite gains
+        # print( len(V) );
+        # print( "starting pmr..." );
+        
+        # currGains = parallel_margvals_returnvals(objective, S, [ele for ele in V], comm, rank, size)
+        currGains = parallel_margvals_returnvals_thread(objective, list( set(S).union(S_prev)), V, nthreads)
+    
+        queries += len(V)
+        
+        
+        V_above_thresh = np.where(currGains >= t)[0]
+        V = [ V[idx] for idx in V_above_thresh ];
+        currGains = [ currGains[idx] for idx in V_above_thresh ];
+        ###End Filtering
+        
+        #     print( len(V) );
+
+        if (len(V) == 0):
+            break;
+        
+        # Random Permutation
+        q.shuffle(V)
+        
+        # print("starting adaptiveAdd...");
+        B = MED_parallel_adaptiveAdd_thread_LAS(V, S, S_prev, objective, eps, k)
+        # print("done.");
+        
+        queries += len( V );
+        
+        i_star = 0
+        
+        for i in range(1, len(B)+1):
+            if(i <= k):
+                if(np.sum(B[0:i]) >= (1-eps)*i):
+                    i_star = i
+            else:
+                if((np.sum(B[i-k:i]) >= (1-eps)*k) and (np.sum(B[0:i-k]) >= (1-eps)*(i-k))):
+                    i_star = i
+        
+        # print( "i_Star: " , i_Star);
+
+        # S = list( set().union( V[0:i_star], S) ); # T_{i-star} = V[0 : i-star]
+        T = list(set(V[0:i_star]) - set(S))
+        S.extend(T)
+        
+    #run second on the entire universe
+
+    t = objective.marginalval(S, S_prev) / np.float( k );
+    queries += 1
+    
+    V_above_thresh = np.where(singletonVals >= t)[0]
+    V = [ V_N[idx] for idx in V_above_thresh ]; 
+    currGains = [ singletonVals[idx] for idx in V_above_thresh ];
+    
+    while len(V) > 0:
+        # Filtering
+        t = objective.marginalval(S, S_prev)/np.float(k)
+        queries += 1
+        
+        #do lazy discard first, based on last round's computations
+        V_above_thresh = np.where(currGains >= t)[0]
+        V = list( set([ V[idx] for idx in V_above_thresh ] ));
+
+        #now recompute requisite gains
+        # print( "starting pmr..." );
+        currGains = parallel_margvals_returnvals_thread(objective, list( set(S).union(S_prev)), V, nthreads)
+    
+        #Added query increment
+        queries += len(V)
+        
+        #currGains = parallel_margvals_returnvals(objective, S, [ele for ele in V], comm, rank, size)
+        # if ( rank == 0):
+        #     print( "done.");
+        
+        V_above_thresh = np.where(currGains >= t)[0]
+        V = [ V[idx] for idx in V_above_thresh ];
+        currGains = [ currGains[idx] for idx in V_above_thresh ];
+
+        if (len(V) == 0):
+            break;
+        
+        # if (rank == p_root):
+        #     print( len(V) );
+
+        # Random Permutation
+        q.shuffle(V)
+        
+        # print("starting adaptiveAdd...");
+        B = MED_parallel_adaptiveAdd_thread_LAS(V, S, S_prev, objective, eps, k)
+        # print("done.");
+        
+        queries += len( V );
+        
+        i_star = 0
+        
+        for i in range(1, len(B)+1):
+            if(i <= k):
+                if(np.sum(B[0:i]) >= (1-eps)*i):
+                    i_star = i
+            else:
+                if((np.sum(B[i-k:i]) >= (1-eps)*k) and (np.sum(B[0:i-k]) >= (1-eps)*(i-k))):
+                    i_star = i
+
+        # print( "i_Star: " , i_Star);
+
+        # S = list( set().union( V[0:i_star], S) ); # T_{i-star} = V[0 : i-star]
+        T = list(set(V[0:i_star]) - set(S))
+        S.extend(T)
+    
+    if (len(V) > 0 and len(S) < k): 
+        print( "LAS has failed. This should be an extremely rare event. Terminating program..." );
+        print( "V: ", V );
+        # print( "S: ", S );
+        exit(1);
+    
+    return S
+
+def MED_Dist_LAS_localMax(objective, k, eps, V, q, comm, rank, size, S_prev, C=[], p_root=0, seed=42, nthreads=16):
+
+    check_inputs(objective, k)
+    comm.barrier()
+    V_split_local = V[rank] #np.array_split(V, size)[rank]
+    
+    # # Compute the marginal addition for each elem in N, then add the best one to solution L; remove it from remaining elements N
+    # ele_A_local_vals = [ LAG_SingleNode(objective, k, eps, list(V_split_local.flatten()), C, seed, False, nthreads)]
+    ele_A_local_vals = [ MED_LAS_SingleNode_localMax(V_split_local, objective, k, eps, q, S_prev, C, seed, nthreads)]
+    ## return AlgRel()
+
+    # # Gather the partial results to all processes
+    ele_vals = comm.allgather(ele_A_local_vals)
+    
+    return [val for sublist in ele_vals for val in sublist]
+
+def MED_LDASH_localMax(objective, k, eps, comm, rank, size, S_prev, p_root=0, seed=42, nthreads=16):
+    '''
+    The parallelizable distributed linear-time greedy algorithm L-DASH. Uses multiple machines to obtain solution (Algorithm 1)
+    PARALLEL IMPLEMENTATION (Multithread)
+    
+    INPUTS:
+    class objective -- contains the methods 'value()' that we want to optimize and its marginal value function 'marginalval()' 
+    int k -- the cardinality constraint (must be k>0)
+    float eps -- the error tolerance between 0 and 1
+    comm -- the MPI4py Comm (MPI.COMM_WORLD)
+    int rank -- the processor's rank (comm.Get_rank())
+    int size -- the number of processors (comm.Get_size())
+    list S_prev -- the solution S from the previous iteration
+
+    OPTIONAL INPUTS:
+    int seed -- random seed to use when drawing samples
+    bool stop_if_aprx: determines whether we exit as soon as we find OPT that reaches approx guarantee or keep searching for better solution
+    nthreads -- Number of threads to use on each machine
+
+    OUTPUTS:
+    list S -- the solution, where each element in the list is an element in the solution set.
+    float f(S) -- the value of the solution
+    time -- runtime of the algorithm
+    time_dist -- runtime spent on the distributed part of the algorithm
+    time_post -- runtime spent on the post processing part of the algorithm
+    ''' 
+
+    comm.barrier()
+    p_start = MPI.Wtime()
+    
+    # # Each processor gets the same random state 'q' so they can independently draw IDENTICAL random sequences .
+    q = np.random.RandomState(42)
+
+    random.seed(seed)
+
+    S = []
+    time_rounds = [0]
+    query_rounds = [0]
+    queries = 0
+    V_all = [ ele for ele in objective.groundset ];
+    
+    # random.Random(seed).shuffle(V)
+    V = [[] for i in range(size)]
+    a, valA = 0, 0
+    
+    # Randomly assigning elements to all the machines 
+    for ele in objective.groundset:
+        # valE = objective.value([ele])
+        
+        # if valE >= valA:
+        #     a = ele
+        #     valA = valE
+           
+        x = random.randint(0, size-1)
+        V[x].append(ele)
+    
+    # # Obtaining the max singleton
+    # currGains = parallel_margvals_returnvals(objective, S, objective.groundset, comm, rank, size)
+    # # queries += len(objective.groundset)
+    # a = np.argmax(currGains);
+
+    # # Removing the max singleton from the groundset
+    # for i in range(size):
+    #     V[i] = list(set(V[i]) - set([a]))
+
+    p_start_dist = MPI.Wtime()
+    S_DistGB_split = MED_Dist_LAS_localMax(objective, k, eps, V, q, comm, rank, size, S_prev, [], p_root, seed, nthreads)
+
+    S_DistGB = []
+    S_DistGB_all = []
+    for i in range(len(S_DistGB_split)):
+        S_DistGB.extend(list(S_DistGB_split[i]))
+        S_tmp = S_DistGB_split[i]
+        if(len(S_tmp)>k):
+            S_DistGB_all.append(list(S_tmp[len(S_tmp) - k : len(S_tmp)]))
+        else:
+            S_DistGB_all.append(list(S_tmp))
+    S_DistGB = list(np.unique(S_DistGB))
+    
+    
+    p_stop_dist = MPI.Wtime()
+    time_dist = (p_stop_dist - p_start_dist)
+
+    p_start_post = MPI.Wtime()
+
+    S_DistGreedy_split_vals = MED_parallel_margvals_of_sets_threads(objective, S_DistGB_all, S_prev, objective.nThreads)
+    # S_DistGreedy_split_vals = parallel_val_of_sets_thread(objective, S_DistGB_all, objective.nThreads)
+    
+    S_star = np.argmax(S_DistGreedy_split_vals)
+    
+    S_star_val = np.max(S_DistGreedy_split_vals)
+
+    T = MED_LAS_SingleNode_localMax(S_DistGB, objective, k, eps, q, S_prev, [], seed, nthreads=objective.nThreads)
+
+    if(len(T)>k):
+        T_star = T[len(T) - k : len(T)]
+    else:
+        T_star = T
+
+    if(objective.value(T_star)>S_star_val):
+        S = T_star
+    else:
+        S = list(S_DistGB_all[S_star])
+    
+    print(S)
+
+    p_stop = MPI.Wtime()
+    time_post = (p_stop - p_start_post)
+    time = (p_stop - p_start)
+    valSol = objective.value( S )
+    # Added increment
+    queries += 1
+    if rank == p_root:
+        print ('MED_LDASH:', valSol, time, 'with k=', k, 'n=', len(objective.groundset), 'eps=', eps, '|S|=', len(S))
+    
+    return S
+
+def MEDLDASH_localMax(objective, k, eps, comm, rank, size, p_root, seed=42, nthreads=16):
+    '''
+    The parallelizable distributed greedy algorithm MED running LDASH over multiple rounds. Uses multiple machines to obtain solution (Algorithm )
+    PARALLEL IMPLEMENTATION (Multithread)
+    
+    INPUTS:
+    class objective -- contains the methods 'value()' that we want to optimize and its marginal value function 'marginalval()' 
+    int k -- the cardinality constraint (must be k>0)
+    list S_prev -- the solution S from the previous iteration
+    float eps -- the error tolerance between 0 and 1
+    comm -- the MPI4py Comm (MPI.COMM_WORLD)
+    int rank -- the processor's rank (comm.Get_rank())
+    int size -- the number of processors (comm.Get_size())
+
+    OPTIONAL INPUTS:
+    int seed -- random seed to use when drawing samples
+    bool stop_if_aprx: determines whether we exit as soon as we find OPT that reaches approx guarantee or keep searching for better solution
+    nthreads -- Number of threads to use on each machine
+
+    OUTPUTS:
+    list S -- the solution, where each element in the list is an element in the solution set.
+    float f(S) -- the value of the solution
+    time -- runtime of the algorithm
+    time_dist -- runtime spent on the distributed part of the algorithm
+    time_post -- runtime spent on the post processing part of the algorithm
+    '''
+
+    comm.barrier()
+    p_start = MPI.Wtime()
+    
+    S = []
+    S_rounds = [[]]
+    time_rounds = [0]
+    query_rounds = [0]
+    queries = 0
+    V = [ ele for ele in objective.groundset ];
+    np.random.shuffle(V)
+    #k_max = np.max(k)iter
+    beta = 1
+    k_p = int(np.ceil(beta * len(objective.groundset)/ (size ** 2)))
+    iters = int(np.ceil(k/k_p))
+    k_p = min(k, k_p)
+    if(rank==0):
+        print("iters: ", iters, "  k_p:", k_p, "  k:",k)
+    time_post = 0
+    time_dist = 0
+    for i in range(0,iters):
+        p_start_dist = MPI.Wtime()
+        if(k - len(S) < k_p): #Last iteration
+            k_p = k - len(S)
+        T = MED_LDASH_localMax(objective, k_p, eps, comm, rank, size, S, p_root, seed, nthreads)
+        # valSolT, queriesT, timeT, T, T_DistGB_split, time_roundsT, query_roundsT = RandGreedI_PGB(objective, k_split, eps, comm, rank, size, p_root=0, seed=42, stop_if_apx=False, nthreads=16)
+        comm.barrier()
+        p_stop_dist = MPI.Wtime()
+        time_dist += (p_stop_dist - p_start_dist)
+        # print("T:", T)
+        T_DistGB = list(set(T))
+        
+        comm.barrier()
+        T_DistGB = list(set(T_DistGB) - set(S))
+        S.extend(T_DistGB)
+        S = list(np.unique(S))
+        S_rounds.append(S)
+        # if(rank==0):
+        #     print("Iteration: ", i, "  Len(S):", len(S), "  Val(S): ", objective.value( S ), "  MargeVal(T): ", objective.marginalval(T_DistGB, S))
+        if (len(S) >= k):
+            # S = S[-k:]
+            break;
+
+    comm.barrier()
+    # print("OUTSIDE FOR LOOP")
+    # if len(S) > K, select last k elements added
+    S = np.unique(S)
+    if len(S) > k:
+        S = S[-k:]
+    p_stop = MPI.Wtime()
+    time = (p_stop - p_start)
+    valSol = objective.value( S )
+    # Added increment
+    queries += 1
+    if rank == p_root:
+        print ('MED+LDASH-localMax:', valSol, queries, time, 'with k=', k, 'n=', len(objective.groundset), 'eps=', eps, '|S|=', len(S))
+
+    return valSol, time, time_dist, time_post, S
+
+#############################################################
+
+def MED_LDASH_LAG(objective, k, eps, comm, rank, size, S_prev, p_root=0, seed=42, nthreads=16):
+    '''
+    The parallelizable distributed linear-time greedy algorithm L-DASH. Uses multiple machines to obtain solution (Algorithm 1)
+    PARALLEL IMPLEMENTATION (Multithread)
+    
+    INPUTS:
+    class objective -- contains the methods 'value()' that we want to optimize and its marginal value function 'marginalval()' 
+    int k -- the cardinality constraint (must be k>0)
+    float eps -- the error tolerance between 0 and 1
+    comm -- the MPI4py Comm (MPI.COMM_WORLD)
+    int rank -- the processor's rank (comm.Get_rank())
+    int size -- the number of processors (comm.Get_size())
+    list S_prev -- the solution S from the previous iteration
+
+    OPTIONAL INPUTS:
+    int seed -- random seed to use when drawing samples
+    bool stop_if_aprx: determines whether we exit as soon as we find OPT that reaches approx guarantee or keep searching for better solution
+    nthreads -- Number of threads to use on each machine
+
+    OUTPUTS:
+    list S -- the solution, where each element in the list is an element in the solution set.
+    float f(S) -- the value of the solution
+    time -- runtime of the algorithm
+    time_dist -- runtime spent on the distributed part of the algorithm
+    time_post -- runtime spent on the post processing part of the algorithm
+    ''' 
+
+    comm.barrier()
+    p_start = MPI.Wtime()
+    
+    # # Each processor gets the same random state 'q' so they can independently draw IDENTICAL random sequences .
+    q = np.random.RandomState(42)
+
+    random.seed(seed)
+
+    S = []
+    time_rounds = [0]
+    query_rounds = [0]
+    queries = 0
+    V_all = [ ele for ele in objective.groundset ];
+    
+    # random.Random(seed).shuffle(V)
+    V = [[] for i in range(size)]
+    a, valA = 0, 0
+    
+    # Randomly assigning elements to all the machines 
+    for ele in objective.groundset:
+        # valE = objective.value([ele])
+        
+        # if valE >= valA:
+        #     a = ele
+        #     valA = valE
+           
+        x = random.randint(0, size-1)
+        V[x].append(ele)
+    
+    # # Obtaining the max singleton
+    # currGains = parallel_margvals_returnvals(objective, S, objective.groundset, comm, rank, size)
+    # # queries += len(objective.groundset)
+    # a = np.argmax(currGains);
+
+    # # Removing the max singleton from the groundset
+    # for i in range(size):
+    #     V[i] = list(set(V[i]) - set([a]))
+
+    p_start_dist = MPI.Wtime()
+    S_DistGB_split = MED_Dist_LAS_localMax(objective, k, eps, V, q, comm, rank, size, S_prev, [], p_root, seed, nthreads)
+
+    S_DistGB = []
+    S_DistGB_all = []
+    for i in range(len(S_DistGB_split)):
+        S_DistGB.extend(list(S_DistGB_split[i]))
+        S_tmp = S_DistGB_split[i]
+        if(len(S_tmp)>k):
+            S_DistGB_all.append(list(S_tmp[len(S_tmp) - k : len(S_tmp)]))
+        else:
+            S_DistGB_all.append(list(S_tmp))
+    S_DistGB = list(np.unique(S_DistGB))
+    
+    
+    p_stop_dist = MPI.Wtime()
+    time_dist = (p_stop_dist - p_start_dist)
+
+    p_start_post = MPI.Wtime()
+
+    S_DistGreedy_split_vals = MED_parallel_margvals_of_sets_threads(objective, S_DistGB_all, S_prev, objective.nThreads)
+    # S_DistGreedy_split_vals = parallel_val_of_sets_thread(objective, S_DistGB_all, objective.nThreads)
+    
+    S_star = np.argmax(S_DistGreedy_split_vals)
+    
+    S_star_val = np.max(S_DistGreedy_split_vals)
+
+    ##############################################################
+
+    T = MED_LAG_SingleNode(objective, k, eps, S_DistGB, V_all, q, [], S_prev, seed, stop_if_approx=False, nthreads=objective.nThreads)
+    
+    # if(objective.value(T)>S_p_val):
+    if(objective.marginalval( T, S_prev )>S_star_val):
+        S = T
+    else:
+        S = list(S_DistGB_all[S_star])
+    # print(S)
+    p_stop = MPI.Wtime()
+    time_post = (p_stop - p_start_post)
+    time = (p_stop - p_start)
+    # valSol = objective.value( S )
+    valSol = objective.marginalval( S, S_prev )
+
+    ################################################################
+
+    # T = MED_LAS_SingleNode_localMax(S_DistGB, objective, k, eps, q, S_prev, [], seed, nthreads=objective.nThreads)
+
+    # if(len(T)>k):
+    #     T_star = T[len(T) - k : len(T)]
+    # else:
+    #     T_star = T
+
+    # if(objective.value(T_star)>S_star_val):
+    #     S = T_star
+    # else:
+    #     S = list(S_DistGB_all[S_star])
+    ######################################################################
+    # print(S)
+
+    p_stop = MPI.Wtime()
+    time_post = (p_stop - p_start_post)
+    time = (p_stop - p_start)
+    valSol = objective.value( S )
+    # Added increment
+    queries += 1
+    if rank == p_root:
+        print ('MED_LDASHLAG:', valSol, time, 'with k=', k, 'n=', len(objective.groundset), 'eps=', eps, '|S|=', len(S))
+    
+    return S
+
+def MEDLDASH_LAG(objective, k, eps, comm, rank, size, p_root, seed=42, nthreads=16):
+    '''
+    The parallelizable distributed greedy algorithm MED running LDASH over multiple rounds. Uses multiple machines to obtain solution (Algorithm )
+    PARALLEL IMPLEMENTATION (Multithread)
+    
+    INPUTS:
+    class objective -- contains the methods 'value()' that we want to optimize and its marginal value function 'marginalval()' 
+    int k -- the cardinality constraint (must be k>0)
+    list S_prev -- the solution S from the previous iteration
+    float eps -- the error tolerance between 0 and 1
+    comm -- the MPI4py Comm (MPI.COMM_WORLD)
+    int rank -- the processor's rank (comm.Get_rank())
+    int size -- the number of processors (comm.Get_size())
+
+    OPTIONAL INPUTS:
+    int seed -- random seed to use when drawing samples
+    bool stop_if_aprx: determines whether we exit as soon as we find OPT that reaches approx guarantee or keep searching for better solution
+    nthreads -- Number of threads to use on each machine
+
+    OUTPUTS:
+    list S -- the solution, where each element in the list is an element in the solution set.
+    float f(S) -- the value of the solution
+    time -- runtime of the algorithm
+    time_dist -- runtime spent on the distributed part of the algorithm
+    time_post -- runtime spent on the post processing part of the algorithm
+    '''
+
+    comm.barrier()
+    p_start = MPI.Wtime()
+    
+    S = []
+    S_rounds = [[]]
+    time_rounds = [0]
+    query_rounds = [0]
+    queries = 0
+    V = [ ele for ele in objective.groundset ];
+    np.random.shuffle(V)
+    #k_max = np.max(k)iter
+    beta = 1
+    k_p = int(np.ceil(beta * len(objective.groundset)/ (size ** 2)))
+    iters = int(np.ceil(k/k_p))
+    k_p = min(k, k_p)
+    if(rank==0):
+        print("iters: ", iters, "  k_p:", k_p, "  k:",k)
+    time_post = 0
+    time_dist = 0
+    for i in range(0,iters):
+        p_start_dist = MPI.Wtime()
+        if(k - len(S) < k_p): #Last iteration
+            k_p = k - len(S)
+        T = MED_LDASH_LAG(objective, k_p, eps, comm, rank, size, S, p_root, seed, nthreads)
+        # valSolT, queriesT, timeT, T, T_DistGB_split, time_roundsT, query_roundsT = RandGreedI_PGB(objective, k_split, eps, comm, rank, size, p_root=0, seed=42, stop_if_apx=False, nthreads=16)
+        comm.barrier()
+        p_stop_dist = MPI.Wtime()
+        time_dist += (p_stop_dist - p_start_dist)
+        # print("T:", T)
+        T_DistGB = list(set(T))
+        
+        comm.barrier()
+        T_DistGB = list(set(T_DistGB) - set(S))
+        S.extend(T_DistGB)
+        S = list(np.unique(S))
+        S_rounds.append(S)
+        # if(rank==0):
+        #     print("Iteration: ", i, "  Len(S):", len(S), "  Val(S): ", objective.value( S ), "  MargeVal(T): ", objective.marginalval(T_DistGB, S))
+        if (len(S) >= k):
+            # S = S[-k:]
+            break;
+
+    comm.barrier()
+    # print("OUTSIDE FOR LOOP")
+    # if len(S) > K, select last k elements added
+    S = np.unique(S)
+    if len(S) > k:
+        S = S[-k:]
+    p_stop = MPI.Wtime()
+    time = (p_stop - p_start)
+    valSol = objective.value( S )
+    # Added increment
+    queries += 1
+    if rank == p_root:
+        print ('MED+LDASH-LAG:', valSol, queries, time, 'with k=', k, 'n=', len(objective.groundset), 'eps=', eps, '|S|=', len(S))
+
+    return valSol, time, time_dist, time_post, S
+
+#############################################################
 
 # Utility functions for MED runinng RandGreedI (S_prev is passed to every routine for computation)
 
-def MED_lazygreedy_MultiNode(objective, k, S_prev, N, comm, rank, size, nthreads=4):
+def MED_lazygreedy_MultiNode(objective, k, S_prev, N, comm, rank, size, nthreads=16):
     ''' 
     Accelerated lazy greedy algorithm: for k steps (Minoux 1978).
     **NOTE** solution sets and values may be different than those found by our Greedy implementation, 
@@ -1442,7 +3607,7 @@ def MED_lazygreedy_MultiNode(objective, k, S_prev, N, comm, rank, size, nthreads
 
     return L
 
-def MED_lazygreedy(objective, k, S_prev, N, nthreads=4):
+def MED_lazygreedy(objective, k, S_prev, N, nthreads=16):
     ''' 
     Accelerated lazy greedy algorithm: for k steps (Minoux 1978).
     **NOTE** solution sets and values may be different than those found by our Greedy implementation, 
@@ -1460,7 +3625,7 @@ def MED_lazygreedy(objective, k, S_prev, N, nthreads=4):
     check_inputs(objective, k)
     queries = 0
     time0 = datetime.now()
-    L = S_prev
+    L = []
     # Cov = []
     L_rounds = [[]] # to hold L's evolution over rounds. Sometimes the new round does not add an element. 
     time_rounds = [0]
@@ -1470,7 +3635,7 @@ def MED_lazygreedy(objective, k, S_prev, N, nthreads=4):
         return N
     # On the first iteration, LazyGreedy behaves exactly like regular Greedy:
     # ele_vals = [ objective.marginalval( [elem], L ) for elem in N ]
-    ele_vals = parallel_margvals_returnvals_thread(objective, L, N, nthreads)
+    ele_vals = parallel_margvals_returnvals_thread(objective, list( set(L).union(S_prev)), N, nthreads)
 
     ele_vals_sortidx = np.argsort(ele_vals)[::-1]
     bestVal_idx = ele_vals_sortidx[0]
@@ -1479,14 +3644,16 @@ def MED_lazygreedy(objective, k, S_prev, N, nthreads=4):
     queries += len(N)
     lazy_idx = 1
 
+    
+    # print("(MED_lazygreedy)  k:",k, "  len(S_prev):", len(S_prev), "  S_prev:", S_prev)
     # On remaining iterations, we update values lazily
     for i in range(1,k):
-        if i%25==0:
-            print('LazyGreedy round', i, 'of', k)
+        # if i%25==0:
+        #     print('LazyGreedy round', i, 'of', k)
 
         # If new marginal value of best remaining ele after prev iter exceeds the *prev* marg value of 2nd best, add it
         queries += 1
-        if objective.marginalval( [ N[ ele_vals_sortidx[ lazy_idx ] ] ], L ) >= ele_vals[ ele_vals_sortidx[1+lazy_idx] ]:
+        if objective.marginalval( [ N[ ele_vals_sortidx[ lazy_idx ] ] ], list( set(L).union(S_prev)) ) >= ele_vals[ ele_vals_sortidx[1+lazy_idx] ]:
             #print('Found a lazy update')
             L.append( N[ele_vals_sortidx[lazy_idx]] )
             L_rounds.append([ele for ele in L])
@@ -1497,11 +3664,11 @@ def MED_lazygreedy(objective, k, S_prev, N, nthreads=4):
 
         else:
             # If we did any lazy update iterations, we need to update bookkeeping for ground set
-            N = list(set(N) - set(L)) 
+            N = list(set(N) - set(list( set(L).union(S_prev)))) 
 
             # Compute the marginal addition for each elem in N, then add the best one to solution L; 
             # Then remove it from remaning elements N
-            ele_vals = [ objective.marginalval( [elem], L ) for elem in N ]
+            ele_vals = [ objective.marginalval( [elem], list( set(L).union(S_prev)) ) for elem in N ]
             ele_vals_sortidx = np.argsort(ele_vals)[::-1]
             bestVal_idx = ele_vals_sortidx[0]
             L.append( N[bestVal_idx] )
@@ -1516,7 +3683,7 @@ def MED_lazygreedy(objective, k, S_prev, N, nthreads=4):
 
     return L
 
-def MED_Dist_Greedy(objective, k, S_prev, V, comm, rank, size, p_root=0, seed=42, nthreads=4):
+def MED_Dist_Greedy(objective, k, S_prev, V, comm, rank, size, p_root=0, seed=42, nthreads=16):
 
     check_inputs(objective, k)
     comm.barrier()
@@ -1530,7 +3697,7 @@ def MED_Dist_Greedy(objective, k, S_prev, V, comm, rank, size, p_root=0, seed=42
     
     return [val for sublist in ele_vals for val in sublist]
 
-def MED_RandGreedI(objective, k, S_prev, eps, comm, rank, size, p_root=0, seed=42, nthreads=4):
+def MED_RandGreedI(objective, k, S_prev, eps, comm, rank, size, p_root=0, seed=42, nthreads=16):
     '''
     The parallelizable distributed greedy algorithm RandGreedI. Uses multiple machines to obtain solution
     PARALLEL IMPLEMENTATION (Multithread)
@@ -1575,12 +3742,15 @@ def MED_RandGreedI(objective, k, S_prev, eps, comm, rank, size, p_root=0, seed=4
         V[x].append(ele)
     # Get the solution of parallel QS
     p_start_dist = MPI.Wtime()
-    
+    if(rank==0):
+        print("(MED_RandGreedI)  k:",k, "  S_prev:", S_prev)
     S_DistGreedy_split = MED_Dist_Greedy(objective, k, S_prev, V, comm, rank, size, p_root, seed, nthreads)
 
     S_DistGreedy = []
     S_DistGreedy_all = [] 
     for i in range(len(S_DistGreedy_split)):
+        if(rank==0):
+            print("(MED_RandGreedI)  len(S_DistGreedy_split[", i,"]):",len(S_DistGreedy_split[i]))
         S_DistGreedy.extend(list(S_DistGreedy_split[i]))
         S_DistGreedy_all.append(list(S_DistGreedy_split[i]))
     S_DistGreedy = list(np.unique(S_DistGreedy))
@@ -1597,7 +3767,12 @@ def MED_RandGreedI(objective, k, S_prev, eps, comm, rank, size, p_root=0, seed=4
     
     S_p_val = np.max(S_DistGreedy_split_vals)
 
+    if(rank==0):
+        print("(MED_RandGreedI)  k:",k, "  len(S_DistGreedy):", len(S_DistGreedy), "  S_prev:", S_prev)
     T = MED_lazygreedy(objective, k, S_prev, S_DistGreedy, nthreads=objective.nThreads)
+
+    if(rank==0):
+        print("(MED_RandGreedI)  len(T):",len(T), "  objective.value(T):", objective.value(T), "  S_prev:", S_prev, "  len(S_DistGreedy_split[S_p]):", len(S_DistGreedy_split[S_p]))
 
     if(objective.value(T)>S_p_val):
         S = T
@@ -1611,11 +3786,11 @@ def MED_RandGreedI(objective, k, S_prev, eps, comm, rank, size, p_root=0, seed=4
     # Added increment
     queries += 1
     if rank == p_root:
-        print ('RandGreedI:', valSol, time, 'with k=', k, 'n=', len(objective.groundset), 'eps=', eps, '|S|=', len(S))
+        print ('MED_RandGreedI:', valSol, time, 'with k=', k, 'n=', len(objective.groundset), 'eps=', eps, '|S|=', len(S))
     
     return S
 
-def MEDRG(objective, k, eps, comm, rank, size, p_root, seed=42, nthreads=4):
+def MEDRG(objective, k, eps, comm, rank, size, p_root, seed=42, nthreads=16):
     '''
     The parallelizable distributed greedy algorithm MED running RandGreedI over multiple rounds. Uses multiple machines to obtain solution (Algorithm 2)
     PARALLEL IMPLEMENTATION (Multithread)
@@ -1657,22 +3832,29 @@ def MEDRG(objective, k, eps, comm, rank, size, p_root, seed=42, nthreads=4):
     k_p = int(np.ceil(beta * len(objective.groundset)/ (size ** 2)))
     iters = int(np.ceil(k/k_p))
     k_p = min(k, k_p)
-    if(rank==0):
-        print("iters: ", iters, "  k_p:", k_p, "  k:",k)
+    
     time_post = 0
     time_dist = 0
-    for i in range(0,iters):
+    if(rank==0):
+        print("(MEDRG) iters: ", iters, "  k_p:", k_p, "  k:",k, "  S:", S)
+    for i in range(iters):
         p_start_dist = MPI.Wtime()
         if(k - len(S) < k_p): #Last iteration
-            k_p = k - k_p
+            k_p = k - len(S)
+
+        
         # T = MED_RandGreedI(objective, k, S_prev, eps, comm, rank, size, p_root, seed, nthreads)
+        if(rank==0):
+            print("(MEDRG) iter: ", i, "  k_p:", k_p, "  k:",k, "  S:", S)
         T = MED_RandGreedI(objective, k_p, S, eps, comm, rank, size, p_root, seed, nthreads)
-        # valSolT, queriesT, timeT, T, T_DistGB_split, time_roundsT, query_roundsT = RandGreedI_PGB(objective, k_split, eps, comm, rank, size, p_root=0, seed=42, stop_if_apx=False, nthreads=4)
+        if(rank==0):
+            print("(MEDRG) iter: ", i, "   T:", T)
+        # valSolT, queriesT, timeT, T, T_DistGB_split, time_roundsT, query_roundsT = RandGreedI_PGB(objective, k_split, eps, comm, rank, size, p_root=0, seed=42, stop_if_apx=False, nthreads=16)
         comm.barrier()
         p_stop_dist = MPI.Wtime()
         time_dist += (p_stop_dist - p_start_dist)
         T = list(np.unique(T))
-        
+        T = list( set(T)-set(S) )
         comm.barrier()
         
         S.extend(T)
@@ -1696,7 +3878,7 @@ def MEDRG(objective, k, eps, comm, rank, size, p_root, seed=42, nthreads=4):
     # Added increment
     queries += 1
     if rank == p_root:
-        print ('MED:', valSol, queries, time, 'with k=', k, 'n=', len(objective.groundset), 'eps=', eps, '|S|=', len(S))
+        print ('MED+RandGreedI:', valSol, queries, time, 'with k=', k, 'n=', len(objective.groundset), 'eps=', eps, '|S|=', len(S))
 
     return valSol, time, time_dist, time_post, S
 
@@ -2196,7 +4378,7 @@ def ParallelGreedyBoost_Original_MultiNode(objective, k, eps, comm, rank, size, 
 
 
 # Lazy Greedy Algorithm (Utility functions for RandGreedI and BiCriteriaGreedy)
-def lazygreedy_MultiNode(objective, k, N, comm, rank, size, nthreads=4):
+def lazygreedy_MultiNode(objective, k, N, comm, rank, size, nthreads=16):
     ''' 
     Accelerated lazy greedy algorithm: for k steps (Minoux 1978).
     **NOTE** solution sets and values may be different than those found by our Greedy implementation, 
@@ -2273,7 +4455,7 @@ def lazygreedy_MultiNode(objective, k, N, comm, rank, size, nthreads=4):
 
     return L
 
-def lazygreedy(objective, k, N, nthreads=4):
+def lazygreedy(objective, k, N, nthreads=16):
     ''' 
     Accelerated lazy greedy algorithm: for k steps (Minoux 1978).
     **NOTE** solution sets and values may be different than those found by our Greedy implementation, 
@@ -2347,7 +4529,7 @@ def lazygreedy(objective, k, N, nthreads=4):
 
     return L
 
-def Dist_Greedy(objective, k, V, comm, rank, size, p_root=0, seed=42, nthreads=4):
+def Dist_Greedy(objective, k, V, comm, rank, size, p_root=0, seed=42, nthreads=16):
 
     check_inputs(objective, k)
     comm.barrier()
@@ -2362,7 +4544,7 @@ def Dist_Greedy(objective, k, V, comm, rank, size, p_root=0, seed=42, nthreads=4
     return [val for sublist in ele_vals for val in sublist]
 
 # RandGreedI [Barbosa et al. 2015]
-def RandGreedI(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=4):
+def RandGreedI(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=16):
     '''
     The parallelizable distributed greedy algorithm RandGreedI. Uses multiple machines to obtain solution
     PARALLEL IMPLEMENTATION (Multithread)
@@ -2448,7 +4630,7 @@ def RandGreedI(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=
     return valSol, time, time_dist, time_post, S, S_DistGreedy_split, time_rounds, query_rounds
 
 # RandGreedI using LAG as ALG on the primary machine (Appendix Results)
-def RandGreedI_LAG(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=4):
+def RandGreedI_LAG(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=16):
     '''
     The parallelizable distributed greedy algorithm RandGreedI. Uses multiple machines to obtain solution
     PARALLEL IMPLEMENTATION (Multithread)
@@ -2534,7 +4716,7 @@ def RandGreedI_LAG(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthre
     return valSol, time, time_dist, time_post, S, S_DistGreedy_split, time_rounds, query_rounds
 
 # BicriteriaGreedy [Epasto et al. 2017]
-def BiCriteriaGreedy(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=4, run_Full=False):
+def BiCriteriaGreedy(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=16, run_Full=False):
     '''
     The parallelizable distributed greedy algorithm BiCriteriaGreedy. Uses multiple machines to obtain solution
     PARALLEL IMPLEMENTATION (Multithread)
@@ -2630,7 +4812,7 @@ def BiCriteriaGreedy(objective, k, eps, comm, rank, size, p_root=0, seed=42, nth
 
 
 # Lazy Greedy Algorithm for ParallelAlgoGreedy (Cumuluative set C passed every run)
-def lazygreedyBarbosa(objective, k, N, C, nthreads=4):
+def lazygreedyBarbosa(objective, k, N, C, nthreads=16):
     ''' 
     Accelerated lazy greedy algorithm: for k steps (Minoux 1978).
     **NOTE** solution sets and values may be different than those found by our Greedy implementation, 
@@ -2707,7 +4889,7 @@ def lazygreedyBarbosa(objective, k, N, C, nthreads=4):
     # L_final = [objective.realset[i] for i in L]
     return L #objective.A[L,:]
 
-def Dist_GreedyBarbosa(objective, k, V, C, comm, rank, size, p_root=0, seed=42, nthreads=4):
+def Dist_GreedyBarbosa(objective, k, V, C, comm, rank, size, p_root=0, seed=42, nthreads=16):
 
     check_inputs(objective, k)
     comm.barrier()
@@ -2722,7 +4904,7 @@ def Dist_GreedyBarbosa(objective, k, V, C, comm, rank, size, p_root=0, seed=42, 
     return [val for sublist in ele_vals for val in sublist]
 
 # ParallelGreedyAlg [Barbosa et al. 2016]
-def ParallelAlgoGreedy(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=4):
+def ParallelAlgoGreedy(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=16):
     
 
     '''
@@ -2799,7 +4981,7 @@ def ParallelAlgoGreedy(objective, k, eps, comm, rank, size, p_root=0, seed=42, n
     return valSol, time, S #time_dist, time_post, 
 
 # DistortedDistributed [Kazemi et al. 2021]
-def DistortedDistributed(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=4):
+def DistortedDistributed(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=16):
     
 
     '''
@@ -2870,3 +5052,399 @@ def DistortedDistributed(objective, k, eps, comm, rank, size, p_root=0, seed=42,
     print ('ParallelAlgoGreedy:', valSol, time, 'with k=', k, 'n=', objective.A.shape[1], 'eps=', eps, '|S|=', len(S))
         
     return valSol, time, S #time_dist, time_post, 
+
+
+# Utility functions for RandGreedI_FR
+def Dist_Greedy_FR_thread(objective, k, N, nthreads=16):
+    '''
+    Parallel-compute the marginal value f(element)-f(L) of each element in set N. Version for stochasticgreedy_parallel.
+    Returns the ordered list of marginal values corresponding to the list of remaining elements N
+    '''
+    #Dynamically obtaining the number of threads fr parallel computation
+    # nthreads_rank = multiprocessing.cpu_count()
+    nthreads_obj = objective.nThreads
+    N_split_local = np.array_split(N, nthreads_obj)
+    #with concurrent.futures.ProcessPoolExecutor(max_workers=nthreads) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=nthreads_obj) as executor:
+        futures = [executor.submit(lazygreedy, objective, k, split) for split in N_split_local]
+        return_value = [f.result() for f in futures]
+    A = []
+    for i in range(len(return_value)):
+        A.extend(return_value[i])
+    # return return_value
+    return A
+
+    # return return_value
+
+def Dist_Greedy_FR(objective, k, V, comm, rank, size, p_root=0, seed=42, nthreads=16):
+
+    check_inputs(objective, k)
+    comm.barrier()
+    V_split_local = V[rank] # np.array_split(V, size)[rank]
+    
+    # # Compute the marginal addition for each elem in N, then add the best one to solution L; remove it from remaining elements N
+    # ele_A_local_vals = [ lazygreedy(objective, k, list(V_split_local.flatten()), nthreads)]
+    ele_A_local_vals = [ lazygreedy(objective, k, V_split_local, nthreads)]
+    # # Gather the partial results to all processes
+    ele_vals = comm.allgather(ele_A_local_vals)
+    
+    return [val for sublist in ele_vals for val in sublist]
+
+# RandGreedI [Barbosa et al. 2015] variant that utilizes the full resources (FR) (i.e \ell = Number of Machines * Number of threads per machine)
+def RandGreedI_FR(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=16):
+    '''
+    The parallelizable distributed greedy algorithm RandGreedI. Uses multiple machines to obtain solution
+    PARALLEL IMPLEMENTATION (Multithread)
+    
+    INPUTS:
+    class objective -- contains the methods 'value()' that we want to optimize and its marginal value function 'marginalval()' 
+    int k -- the cardinality constraint (must be k>0)
+    float eps -- the error tolerance between 0 and 1
+    comm -- the MPI4py Comm (MPI.COMM_WORLD)
+    int rank -- the processor's rank (comm.Get_rank())
+    int size -- the number of processors (comm.Get_size())
+
+    OPTIONAL INPUTS:
+    int seed -- random seed to use when drawing samples
+    nthreads -- Number of threads to use on each machine
+
+    OUTPUTS:
+    list S -- the solution, where each element in the list is an element in the solution set.
+    float f(S) -- the value of the solution
+    time -- runtime of the algorithm
+    time_dist -- runtime spent on the distributed part of the algorithm
+    time_post -- runtime spent on the post processing part of the algorithm
+    ''' 
+
+    comm.barrier()
+    p_start = MPI.Wtime()
+    
+    S = []
+    time_rounds = [0]
+    query_rounds = [0]
+    queries = 0
+    random.seed(seed)
+    # V = [ ele for ele in objective.groundset ];
+    # random.Random(seed).shuffle(V)
+    
+    q = np.random.RandomState(42)
+    V_all = [ ele for ele in objective.groundset ];
+    
+    V = [[] for i in range(size)]
+    for ele in objective.groundset:
+        x = random.randint(0, size-1)
+        V[x].append(ele)
+    # Get the solution of parallel QS
+    p_start_dist = MPI.Wtime()
+    
+    S_DistGreedy_split = Dist_Greedy_FR(objective, k, V, comm, rank, size, p_root, seed, nthreads)
+
+    S_DistGreedy = []
+    S_DistGreedy_all = [] 
+    for i in range(len(S_DistGreedy_split)):
+        S_DistGreedy.extend(list(S_DistGreedy_split[i]))
+        S_DistGreedy_all.append(list(S_DistGreedy_split[i]))
+    S_DistGreedy = list(np.unique(S_DistGreedy))
+    p_stop_dist = MPI.Wtime()
+    
+    time_dist = (p_stop_dist - p_start_dist)
+    
+    p_start_post = MPI.Wtime()
+    # S_DistGreedy_split_vals = parallel_val_of_sets_thread(objective, S_DistGreedy_split, nthreads)
+    S_DistGreedy_split_vals = parallel_val_of_sets_thread(objective, S_DistGreedy_split, nthreads=objective.nThreads)
+    
+
+    S_p = np.argmax(S_DistGreedy_split_vals)
+    
+    S_p_val = np.max(S_DistGreedy_split_vals)
+
+    T = lazygreedy(objective, k, S_DistGreedy, nthreads=objective.nThreads)
+
+    if(objective.value(T)>S_p_val):
+        S = T
+    else:
+        S = list(S_DistGreedy_split[S_p])
+    # print(S)
+    p_stop = MPI.Wtime()
+    time_post = (p_stop - p_start_post)
+    time = (p_stop - p_start)
+    valSol = objective.value( S )
+    # Added increment
+    queries += 1
+    if rank == p_root:
+        print ('RandGreedI:', valSol, time, 'with k=', k, 'n=', len(objective.groundset), 'eps=', eps, '|S|=', len(S))
+    
+    return valSol, time, time_dist, time_post, S, S_DistGreedy_split, time_rounds, query_rounds
+
+
+
+
+
+#############################################################
+
+def TG_SingleNode(objective, k, eps, V, V_all, q, C, seed=42, stop_if_approx=False, nthreads=16, alpha=0, Gamma=0):
+
+    '''
+    The algorithm ThresholdGreedy using Single Node execution for Submodular Mazimization.
+    
+    INPUTS:
+    class objective -- contains the methods 'value()' that we want to optimize and its marginal value function 'marginalval()' 
+    int k -- the cardinality constraint (must be k>0)
+    float eps -- the error tolerance between 0 and 1
+    comm -- the MPI4py Comm (MPI.COMM_WORLD)
+    int rank -- the processor's rank (comm.Get_rank())
+    int size -- the number of processors (comm.Get_size())
+
+    OPTIONAL INPUTS:
+    int seed -- random seed to use when drawing samples
+    bool stop_if_approx: determines whether we exit as soon as we find OPT that reaches approx guarantee or keep searching for better solution
+    nthreads -- Number of threads to use on each machine
+    
+    OUTPUTS:
+    list S -- the solution, where each element in the list is an element in the solution set
+    ''' 
+    
+    if(k >= len(V)):
+        return V
+    
+    if (alpha==0 or Gamma==0):
+        alpha = 1.0 / k
+        valtop = np.max( pastGains);
+        Gamma = valtop
+    
+    S = []
+    #I1 = make_I(eps, k)
+    
+    tau = Gamma / (alpha * np.float(k));
+    # taumin = Gamma / (3.0 * np.float(k));
+    taumin = (eps * Gamma) / np.float(k);
+    print( "TG-- Gamma:", Gamma, "  alpha:", alpha,   "  tau:", tau, "  taumin:", taumin, "  |V|:", len(V), "  k:", k);
+    
+    while (tau >= taumin):
+        
+        for e in V:
+            currGain =  objective.marginalval( [e], S )
+            # queries += 1
+            if currGain >= tau:
+                S.append(e)
+
+        print("TG-- For tau:", tau, "  --|S|:", len(S))
+        if (len(S) >= k):
+            break;
+        tau = tau * (1.0 - eps)
+    
+    print("TG: After WHILE-- |V|:", len(V), "  |S|:", len(S), "  tau:", tau, "  k:", k )
+    if(len(S)>k):
+        Ap = S[len(S) - k : len(S)]
+    else:
+        Ap = S;
+    
+    return Ap
+
+def QS_SingleNode_localMax(V_N, objective, k, eps, q, C, seed=42, nthreads=16):
+    '''
+    The parallelizable greedy algorithm LAS (Low-Adapive-Sequencing) using Single Node execution (OPTIMIZED IMPLEMENTATION)
+    
+    INPUTS:
+    class objective -- contains the methods 'value()' that we want to optimize and its marginal value function 'marginalval()' 
+    int k           -- the cardinality constraint (must be k>0)
+    float eps       -- the error tolerance between 0 and 1
+    int a           -- the max singleton assigned to every machine
+    comm            -- the MPI4py Comm (MPI.COMM_WORLD)
+    int rank        -- the processor's rank (comm.Get_rank())
+    int size        -- the number of processors (comm.Get_size())
+
+    OPTIONAL INPUTS:
+    int seed            -- random seed to use when drawing samples
+    bool stop_if_approx -- determines whether we exit as soon as we find OPT that reaches approx guarantee or keep searching for better solution
+
+    OUTPUTS:
+    float f(S)                  -- the value of the solution
+    int queries                 -- the total queries (marginal values count as 2 queries since f(T)-f(S) )
+    float time                  -- the processing time to optimize the function.
+    list S                      -- the solution, where each element in the list is an element in the solution set.
+    list of lists S_rounds      -- each element is a list containing the solution set S at the corresponding round.
+    list of lists time_rounds   -- each element is a list containing the time at the corresponding round
+    list of lists query_rounds  -- each element is a list containing the number of queries at the corresponding round
+    list singletonVals          -- each element is the current marginal gain of the corresponding element in groundset
+    '''  
+
+    
+    print( "\n --- Running QS on N_i of sizeN=", len(V_N)," ---"); 
+
+    if(k >= len(V_N)):
+        return V_N
+
+    n = len(V_N)    
+
+    # Each processor gets its own random state so they can independently draw IDENTICAL random sequences a_seq.
+    #proc_random_states = [np.random.RandomState(seed) for processor in range(size)]
+    randstate = np.random.RandomState(seed)
+    queries = 0
+    
+    
+    # q.shuffle(V_ground)
+    currGains = parallel_margvals_returnvals_thread(objective, [], V_N, nthreads)
+    
+    #initialize S to max singleton
+    # S = [a]
+    S = [V_N[np.argmax(currGains)]];
+    
+    queries += len(V_N)
+       
+    
+    V = list( set(V_N) - set(S));
+    # Random Permutation
+    q.shuffle(V)
+
+    print("--QS: |V|=", len(V))
+
+    for e in V:
+        t = (1/np.float(k))*objective.value(S)
+        queries += 1
+        currGain =  objective.marginalval( [e], S )
+        print("QS --Element:", e, "  --currGain:", currGain, "  --t:", t, "  -|S|", len(S))
+        if currGain >= t:
+            S.append(e)
+    
+    print( "\n --- Completed QS on N_i with S of sizeS=", len(S)," ---"); 
+
+    return S
+
+def Dist_QS_localMax(objective, k, eps, V, q, comm, rank, size, C=[], p_root=0, seed=42, nthreads=16):
+
+    check_inputs(objective, k)
+    comm.barrier()
+    V_split_local = V[rank] #np.array_split(V, size)[rank]
+    
+    # # Compute the marginal addition for each elem in N, then add the best one to solution L; remove it from remaining elements N
+    # ele_A_local_vals = [ LAG_SingleNode(objective, k, eps, list(V_split_local.flatten()), C, seed, False, nthreads)]
+    ele_A_local_vals = [ QS_SingleNode_localMax(V_split_local, objective, k, eps, q, C, seed, nthreads)]
+    ## return AlgRel()
+
+    # # Gather the partial results to all processes
+    ele_vals = comm.allgather(ele_A_local_vals)
+    
+    return [val for sublist in ele_vals for val in sublist]
+
+#############################################################
+
+# DQS_QS_TG (Algorithm DQS with QS in the distributed setting + (QS + TG) in post processing)
+
+def DQS_QS_TG(objective, k, eps, comm, rank, size, p_root=0, seed=42, nthreads=16):
+    '''
+    The parallelizable distributed linear-time greedy algorithm D-QS. Uses multiple machines to obtain solution (Algorithm 7)
+    PARALLEL IMPLEMENTATION (Multithread)
+    
+    INPUTS:
+    class objective -- contains the methods 'value()' that we want to optimize and its marginal value function 'marginalval()' 
+    int k -- the cardinality constraint (must be k>0)
+    float eps -- the error tolerance between 0 and 1
+    comm -- the MPI4py Comm (MPI.COMM_WORLD)
+    int rank -- the processor's rank (comm.Get_rank())
+    int size -- the number of processors (comm.Get_size())
+
+    OPTIONAL INPUTS:
+    int seed -- random seed to use when drawing samples
+    bool stop_if_aprx: determines whether we exit as soon as we find OPT that reaches approx guarantee or keep searching for better solution
+    nthreads -- Number of threads to use on each machine
+
+    OUTPUTS:
+    list S -- the solution, where each element in the list is an element in the solution set.
+    float f(S) -- the value of the solution
+    time -- runtime of the algorithm
+    time_dist -- runtime spent on the distributed part of the algorithm
+    time_post -- runtime spent on the post processing part of the algorithm
+    ''' 
+
+    comm.barrier()
+    p_start = MPI.Wtime()
+    
+    # # Each processor gets the same random state 'q' so they can independently draw IDENTICAL random sequences .
+    q = np.random.RandomState(42)
+
+    random.seed(seed)
+
+    S = []
+    time_rounds = [0]
+    query_rounds = [0]
+    queries = 0
+    V_all = [ ele for ele in objective.groundset ];
+    
+    # random.Random(seed).shuffle(V)
+    V = [[] for i in range(size)]
+    
+    # Randomly assigning elements to all the machines 
+    for ele in objective.groundset:
+        
+        x = random.randint(0, size-1)
+        V[x].append(ele)
+    
+    p_start_dist = MPI.Wtime()
+    S_DistGB_split = Dist_QS_localMax(objective, k, eps, V, q, comm, rank, size, [], p_root, seed, nthreads)
+
+    S_DistGB = []
+    S_DistGB_all = []
+    for i in range(len(S_DistGB_split)):
+        S_DistGB.extend(list(S_DistGB_split[i]))
+        S_tmp = S_DistGB_split[i]
+        if(len(S_tmp)>k):
+            S_DistGB_all.append(list(S_tmp[len(S_tmp) - k : len(S_tmp)]))
+        else:
+            S_DistGB_all.append(list(S_tmp))
+    S_DistGB = list(np.unique(S_DistGB))
+    
+    
+    p_stop_dist = MPI.Wtime()
+    time_dist = (p_stop_dist - p_start_dist)
+
+    p_start_post = MPI.Wtime()
+
+    S_DistGreedy_split_vals = parallel_val_of_sets_thread(objective, S_DistGB_all, objective.nThreads)
+    
+    S_star = S_DistGB_split[0] # np.argmax(S_DistGreedy_split_vals)
+    
+    S_star_val = objective.value(S_star) # np.max(S_DistGreedy_split_vals)
+
+    print("DQS: --|S|:", len(S_DistGB), "  --|S_star|:", len(S_star), "  --S_star_val", S_star_val )
+    ##################################
+    # QS on entire returned set from all machines (S_DistGB)
+    T_p = QS_SingleNode_localMax(S_DistGB, objective, k, eps, q, [], seed, nthreads=objective.nThreads)
+    if(len(T_p)>k):
+        T_star = T_p[len(T_p) - k : len(T_p)]
+    else:
+        T_star = T_p
+    
+    
+    
+    ##################################
+    # p_start_post = MPI.Wtime()
+    # Compute alpha = 1/(4+(...)), gamma = f(T_star) and call ThresholdGreedy on the T_p returned by QS on (S_DistGB)
+    alpha = 1/2
+    Gamma = objective.value(T_star)
+    print("DQS: Completed QS on S --|T_p|:", len(T_p), "  --|T_star|:", len(T_star), "  --T_star_val", Gamma )
+
+    T = TG_SingleNode(objective, k, eps, T_p, V_all, q, [], seed, stop_if_approx=False, nthreads=objective.nThreads, alpha=alpha, Gamma=Gamma)
+    
+    print("DQS: Completed TG on T_p --|T|:", len(T))
+    ##################################
+    # S = argmax (S_star, T_star, T)
+    if(objective.value(T) >= objective.value(T_star) and objective.value(T) >= S_star_val):
+        S = T
+    elif(objective.value(T_star) >= objective.value(T) and objective.value(T_star) >= S_star_val):
+        S = T_star
+    else:
+        S = list(S_DistGB_all[S_star])
+    
+    # print(S)
+    p_stop = MPI.Wtime()
+    time_post = (p_stop - p_start_post)
+    time = (p_stop - p_start)
+    valSol = objective.value( S )
+
+    ##################################
+    
+    if rank == p_root:
+        print ('DQS-QS-TG:', valSol, time, 'with k=', k, 'n=', len(objective.groundset), 'eps=', eps, '|S|=', len(S))
+    
+    return valSol, time, time_dist, time_post, S

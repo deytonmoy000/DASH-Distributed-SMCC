@@ -1,5 +1,5 @@
 ### DASH-Distributed_SMCC-python ###
-*DASH-Distributed_SMCC-python* is a python library of high-performance MPI-parallelized implementation of state-of-the-art  distributed(MR) algorithms for submodular maximization described in the paper ***"DASH: A Distributed and Parallelizable Algorithm for Size-Constrained Submodular Maximization"***. 
+*DASH-Distributed_SMCC-python* is a python library of high-performance MPI-parallelized implementation of state-of-the-art  distributed algorithms for submodular maximization described in the paper ***"DASH: Distributed Adaptive Sequencing Heuristic for Submodular Maximization"***. 
 
 
 
@@ -34,7 +34,12 @@ To generate the distributed data for **Experiment 1** and **2** : Please follow 
    - Copy the *"data_exp2_split/"* and *"data_exp3_split/"* directories within each *"machine\<i\>Data"* directory to the corresponding machine **M<sub>i</sub>** and place the directories outside *"/cloud"* (Shared directory created after setting up an MPI cluster using the ([tutorial](https://mpitutorial.com/tutorials/running-an-mpi-cluster-within-a-lan/))).
 
 
- **To run all main section experiments in sequential manner**
+ **To generate Experiment Section 4, 5 results (Journal additional exps)**
+   -  Run the slurm script *script_64N_32T_Journal.sh* from the base directory to generate Experiment 4 results.
+   -  Run the slurm script *script_32N_1T_Journal.sh* from the base directory to generate Experiment 5 results.
+   - The results and plots from the paper are provided in the *results_TAMU* and *plots_TAMU* directories.
+
+ **To generate Experiment Section 1, 2 and 3 (AAAI conference exps) in sequential manner**
    -  Run *bash run.bash* from the base directory
       -  Replace **nThreads** in the script *./bash_scripts/runExpSet.sh* by the number of threads you would like the experiments to use.
       -  Replace **nNodes** in the script *./bash_scripts/runExpSet.sh* by the number of machines (distributed) you would like the experiments to use.
@@ -88,13 +93,15 @@ To generate the distributed data for **Experiment 1** and **2** : Please follow 
 
 <!-- ### Submodular Maximization Algorithms from "DASH: Distributed Adaptive Sequencing Heuristic for Submodular Maximization": ### -->
 
-- **DASH** (Algorithm 1).
+- **R-DASH** (Algorithm 4).
 
-- **G-DASH** (Algorithm 2).
+- **G-DASH** (Algorithm 5).
 
-- **T-DASH** (Algorithm 3).
+- **T-DASH** (Algorithm 6).
 
-- **MED** (Algorithm 4).
+- **L-Dist** (Algorithm 7)
+
+- **MED** (Algorithm 8).
 
 - **RandGreedI** (Barbosa et. al. 2015).
 
@@ -106,7 +113,7 @@ To generate the distributed data for **Experiment 1** and **2** : Please follow 
 
 - **ParallelGreedyBoost()** (Chen et. al. 2021).
 
- All the centralized data procedures are implemented in ***src/submodular_DASH_Centralized.py*** and all the distributed data procedures are implemented in ***src/submodular_DASH_Distributed.py***
+ All the centralized data procedures are implemented in ***src/submodular_DASH_Centralized.py*** and all the decentralized data procedures (that require matrix communication) are implemented in ***src/submodular_DASH_Distributed.py***
 
 
 ### Objective functions: ###
