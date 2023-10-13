@@ -17,7 +17,7 @@ Please ensure the following steps are completed before running the experiments:
 - Install **networkx**
 
 
-### Replicating our Experiments 4 and 5 (Journal additional exps): ###
+### Replicating our Experiments 4 and 5 (Journal additional exps - large cluster setup): ###
 
 **To generate the results**
    -  Run the slurm script *script_64N_32T_Journal.sh* from the base directory to generate Experiment 4 results.
@@ -25,7 +25,7 @@ Please ensure the following steps are completed before running the experiments:
    - The results and plots from the paper are provided in the *results_TAMU* and *plots_TAMU* directories.
 
 
-### Replicating our Experiments 1,2 and 3 (AAAI conference exps): ###
+### Replicating our Experiments 1,2 and 3 (AAAI conference exps - local cluster setup): ###
 
 Our experiments can be replicated by running the following scripts:
 -  Set up an MPI cluster using the tutorial in *https://mpitutorial.com/tutorials/running-an-mpi-cluster-within-a-lan/*
