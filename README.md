@@ -17,7 +17,14 @@ Please ensure the following steps are completed before running the experiments:
 - Install **networkx**
 
 
-### Replicating our Experiments: ###
+### Replicating our Experiments 4 and 5 (Journal additional exps): ###
+**To generate the results **
+   -  Run the slurm script *script_64N_32T_Journal.sh* from the base directory to generate Experiment 4 results.
+   -  Run the slurm script *script_32N_1T_Journal.sh* from the base directory to generate Experiment 5 results.
+   - The results and plots from the paper are provided in the *results_TAMU* and *plots_TAMU* directories.
+
+
+### Replicating our Experiments 1,2 and 3 (AAAI conference exps): ###
 
 Our experiments can be replicated by running the following scripts:
 -  Set up an MPI cluster using the tutorial in *https://mpitutorial.com/tutorials/running-an-mpi-cluster-within-a-lan/*
@@ -34,12 +41,7 @@ To generate the distributed data for **Experiment 1** and **2** : Please follow 
    - Copy the *"data_exp2_split/"* and *"data_exp3_split/"* directories within each *"machine\<i\>Data"* directory to the corresponding machine **M<sub>i</sub>** and place the directories outside *"/cloud"* (Shared directory created after setting up an MPI cluster using the ([tutorial](https://mpitutorial.com/tutorials/running-an-mpi-cluster-within-a-lan/))).
 
 
- **To generate Experiment Section 4, 5 results (Journal additional exps)**
-   -  Run the slurm script *script_64N_32T_Journal.sh* from the base directory to generate Experiment 4 results.
-   -  Run the slurm script *script_32N_1T_Journal.sh* from the base directory to generate Experiment 5 results.
-   - The results and plots from the paper are provided in the *results_TAMU* and *plots_TAMU* directories.
-
- **To generate Experiment Section 1, 2 and 3 (AAAI conference exps) in sequential manner**
+ **To generate Experiment Section 1, 2 and 3 results in sequential manner**
    -  Run *bash run.bash* from the base directory
       -  Replace **nThreads** in the script *./bash_scripts/runExpSet.sh* by the number of threads you would like the experiments to use.
       -  Replace **nNodes** in the script *./bash_scripts/runExpSet.sh* by the number of machines (distributed) you would like the experiments to use.
